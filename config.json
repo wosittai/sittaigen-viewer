@@ -1,0 +1,12 @@
+{
+  "expectedKeyId": "cc54d222c9f477b644381a41",
+  "firebase": {
+    "apiKey": "AIzaSyBZRdkD9u7f9PNiCSk8eeUz8ARO-4L8UHs",
+    "appId": "1:649075308253:web:1194d54faeb3c837bc4d34",
+    "authDomain": "sittaigen-viewer.firebaseapp.com",
+    "projectId": "sittaigen-secure-viewer"
+  },
+  "keyDocumentPath": "vaults/sittaigen",
+  "mainEntry": "program_badawczy_2025_2026/index.html",
+  "version": 1
+}

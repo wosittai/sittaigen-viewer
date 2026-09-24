@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; connect-src 'self' https://*.googleapis.com https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://firestore.googleapis.com; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com; img-src 'self' data: https://*.googleusercontent.com; style-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com">
+  <title>SITTAI — Repozytorium badawcze</title>
+  <link rel="stylesheet" href="styles.css?v=2">
+  <script type="module" src="app.js?v=2"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand-block">
+      <span class="brand-mark" aria-hidden="true">S</span>
+      <div>
+        <p class="eyebrow">SITTAI / SECURE RESEARCH ARCHIVE</p>
+        <h1>Repozytorium badawcze</h1>
+      </div>
+    </div>
+    <div class="security-state" id="securityState" data-state="locked">
+      <span class="state-dot"></span>
+      <span id="securityLabel">Repozytorium zablokowane</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="access-panel" id="accessPanel">
+      <div class="access-copy">
+        <p class="section-code">ACCESS / 01</p>
+        <h2>Dostęp kontrolowany kryptograficznie</h2>
+        <p class="lede">Zawartość archiwum, manifest i nazwy plików są zaszyfrowane algorytmem AES-256-GCM. GitHub przechowuje wyłącznie szyfrogramy.</p>
+      </div>
+      <div class="auth-card">
+        <div class="auth-rule"></div>
+        <p class="auth-title">Autoryzacja Google</p>
+        <p class="auth-text" id="authText">Zaloguj się kontem Google znajdującym się na liście dostępu.</p>
+        <button class="primary-button" id="loginButton" type="button" disabled>
+          <span>Kontynuuj przez Google</span>
+          <span aria-hidden="true">↗</span>
+        </button>
+        <p class="technical-status" id="technicalStatus" role="status">Inicjalizacja bezpiecznego środowiska…</p>
+      </div>
+    </section>
+
+    <section class="archive-panel" id="archivePanel" hidden>
+      <div class="portal-toolbar">
+        <div class="portal-identity">
+          <p class="section-code">SECURE SESSION / ACTIVE</p>
+          <strong>Program badawczy 2025–2026</strong>
+          <span id="identityLine"></span>
+        </div>
+        <nav class="portal-nav" aria-label="Nawigacja programu">
+          <button id="indexButton" type="button" data-active="true">Indeks</button>
+          <button id="simulatorsButton" type="button">Symulatory</button>
+          <button id="combinedReportButton" type="button">Raport zbiorczy</button>
+          <button id="logoutButton" type="button" class="lock-button">Zablokuj</button>
+        </nav>
+      </div>
+      <div class="portal-frame-shell">
+        <div class="portal-loading" id="portalLoading">Odszyfrowywanie widoku…</div>
+        <iframe id="portalFrame" title="Indeks programu badawczego SITTAI" referrerpolicy="no-referrer"></iframe>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>SITTAI / repozytorium szyfrowane</span>
+    <span>Dane jawne nie są utrwalane w pamięci lokalnej przeglądarki</span>
+  </footer>
+</body>
+</html>
