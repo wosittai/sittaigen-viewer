@@ -82,7 +82,7 @@ function contentUrl(path) {
 
 function setPortal(path, activeButton) {
   elements.portalLoading.hidden = false;
-  for (const button of [elements.indexButton, elements.simulatorsButton, elements.combinedReportButton]) {
+  for (const button of [elements.indexButton, elements.beechMapButton, elements.simulatorsButton, elements.combinedReportButton]) {
     button.dataset.active = String(button === activeButton);
   }
   elements.portalFrame.src = contentUrl(path);
@@ -162,7 +162,7 @@ async function init() {
     accessPanel: $("accessPanel"), archivePanel: $("archivePanel"), loginButton: $("loginButton"),
     logoutButton: $("logoutButton"), technicalStatus: $("technicalStatus"),
     securityState: $("securityState"), securityLabel: $("securityLabel"), identityLine: $("identityLine"),
-    indexButton: $("indexButton"), simulatorsButton: $("simulatorsButton"),
+    indexButton: $("indexButton"), beechMapButton: $("beechMapButton"), simulatorsButton: $("simulatorsButton"),
     combinedReportButton: $("combinedReportButton"), portalFrame: $("portalFrame"), portalLoading: $("portalLoading")
   });
 
@@ -186,6 +186,7 @@ async function init() {
   elements.loginButton.addEventListener("click", login);
   elements.logoutButton.addEventListener("click", logout);
   elements.indexButton.addEventListener("click", () => setPortal(state.manifest.main_entry || state.config.mainEntry, elements.indexButton));
+  elements.beechMapButton.addEventListener("click", () => setPortal("mapa_bukow/index.html", elements.beechMapButton));
   elements.simulatorsButton.addEventListener("click", () => setPortal("program_badawczy_2025_2026/symulatory/index.html", elements.simulatorsButton));
   elements.combinedReportButton.addEventListener("click", () => setPortal("program_badawczy_2025_2026/SITTAI_program_badawczy_2025-05_2026-09.pdf", elements.combinedReportButton));
   elements.portalFrame.addEventListener("load", () => { elements.portalLoading.hidden = true; });

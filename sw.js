@@ -5,7 +5,9 @@ let rawKey = null;
 let manifestByPath = new Map();
 const plaintextCache = new Map();
 let cacheBytes = 0;
-const MAX_CACHE_BYTES = 64 * 1024 * 1024;
+// The encrypted beech-map PMTiles archive is ~56 MiB. Keep it in volatile
+// memory after the first authenticated download so range requests stay fast.
+const MAX_CACHE_BYTES = 160 * 1024 * 1024;
 
 self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
