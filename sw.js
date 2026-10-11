@@ -6,9 +6,9 @@ let manifestByPath = new Map();
 let expiresAt = 0;
 const plaintextCache = new Map();
 let cacheBytes = 0;
-// The encrypted beech-map PMTiles archive is ~56 MiB. Keep it in volatile
-// memory after the first authenticated download so range requests stay fast.
-const MAX_CACHE_BYTES = 160 * 1024 * 1024;
+// Large archives are encrypted in independent 1 MiB chunks. This volatile LRU
+// keeps nearby map ranges fast without downloading or retaining a whole map.
+const MAX_CACHE_BYTES = 48 * 1024 * 1024;
 
 self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
@@ -43,43 +43,86 @@ async function importKey() {
   return crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, ["decrypt"]);
 }
 
-async function decryptFile(entry) {
-  if (plaintextCache.has(entry.id)) return plaintextCache.get(entry.id);
-  const response = await fetch(new URL(entry.blob, self.registration.scope), { cache: "no-store" });
+function remember(cacheKey, bytes) {
+  if (bytes.byteLength > MAX_CACHE_BYTES / 2) return;
+  while (cacheBytes + bytes.byteLength > MAX_CACHE_BYTES && plaintextCache.size) {
+    const [oldestKey, oldest] = plaintextCache.entries().next().value;
+    plaintextCache.delete(oldestKey);
+    cacheBytes -= oldest.byteLength;
+  }
+  plaintextCache.set(cacheKey, bytes);
+  cacheBytes += bytes.byteLength;
+}
+
+async function decryptBlob(blob, aadText, cacheKey) {
+  if (plaintextCache.has(cacheKey)) {
+    const cached = plaintextCache.get(cacheKey);
+    plaintextCache.delete(cacheKey);
+    plaintextCache.set(cacheKey, cached);
+    return cached;
+  }
+  const response = await fetch(new URL(blob, self.registration.scope), { cache: "no-store" });
   if (!response.ok) throw new Error(`Encrypted object unavailable: ${response.status}`);
   const envelope = new Uint8Array(await response.arrayBuffer());
   if (new TextDecoder().decode(envelope.slice(0, 4)) !== MAGIC) throw new Error("Invalid object envelope");
   const key = await importKey();
-  const aad = new TextEncoder().encode(`sittaigen-file-v1\0${entry.id}`);
+  const aad = new TextEncoder().encode(aadText);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: envelope.slice(4, 16), additionalData: aad, tagLength: 128 },
     key,
     envelope.slice(16)
   );
   const bytes = new Uint8Array(plaintext);
-  if (bytes.byteLength <= MAX_CACHE_BYTES / 2) {
-    while (cacheBytes + bytes.byteLength > MAX_CACHE_BYTES && plaintextCache.size) {
-      const [oldestId, oldest] = plaintextCache.entries().next().value;
-      plaintextCache.delete(oldestId);
-      cacheBytes -= oldest.byteLength;
-    }
-    plaintextCache.set(entry.id, bytes);
-    cacheBytes += bytes.byteLength;
-  }
+  remember(cacheKey, bytes);
   return bytes;
 }
 
-function rangedResponse(bytes, request, headers) {
+async function decryptFile(entry) {
+  return decryptBlob(entry.blob, `sittaigen-file-v1\0${entry.id}`, entry.id);
+}
+
+async function decryptChunk(entry, index) {
+  const chunk = entry.chunks[index];
+  return decryptBlob(chunk.blob, `sittaigen-file-v2\0${entry.id}\0${index}`, `${entry.id}:${index}`);
+}
+
+function requestedRange(request, size) {
   const range = request.headers.get("Range");
-  if (!range) return new Response(bytes, { status: 200, headers });
+  if (!range) return { start: 0, end: size - 1, partial: false };
   const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-  if (!match) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${bytes.byteLength}` } });
-  const start = match[1] ? Number(match[1]) : 0;
-  const end = match[2] ? Math.min(Number(match[2]), bytes.byteLength - 1) : bytes.byteLength - 1;
-  if (start > end || start >= bytes.byteLength) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${bytes.byteLength}` } });
-  headers.set("Content-Range", `bytes ${start}-${end}/${bytes.byteLength}`);
-  headers.set("Content-Length", String(end - start + 1));
-  return new Response(bytes.slice(start, end + 1), { status: 206, headers });
+  if (!match || (!match[1] && !match[2])) return null;
+  let start;
+  let end;
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return null;
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(match[1]);
+    end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) return null;
+  return { start, end, partial: true };
+}
+
+async function readRange(entry, start, end) {
+  if (!entry.chunks) {
+    const bytes = await decryptFile(entry);
+    return bytes.slice(start, end + 1);
+  }
+  const chunkSize = Number(entry.chunk_size);
+  const first = Math.floor(start / chunkSize);
+  const last = Math.floor(end / chunkSize);
+  const chunks = await Promise.all(Array.from({ length: last - first + 1 }, (_, offset) => decryptChunk(entry, first + offset)));
+  const joined = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0));
+  let cursor = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, cursor);
+    cursor += chunk.byteLength;
+  }
+  const relativeStart = start - first * chunkSize;
+  return joined.slice(relativeStart, relativeStart + end - start + 1);
 }
 
 async function handleContent(request, encodedPath) {
@@ -99,7 +142,9 @@ async function handleContent(request, encodedPath) {
   if (!entry) return new Response("Not found in encrypted manifest", { status: 404, headers: { "Cache-Control": "no-store" } });
 
   try {
-    const bytes = await decryptFile(entry);
+    const range = requestedRange(request, Number(entry.size));
+    if (!range) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${entry.size}` } });
+    const bytes = await readRange(entry, range.start, range.end);
     const url = new URL(request.url);
     const headers = new Headers({
       "Content-Type": entry.mime || "application/octet-stream",
@@ -112,7 +157,8 @@ async function handleContent(request, encodedPath) {
       const filename = path.split("/").pop().replace(/["\\]/g, "_");
       headers.set("Content-Disposition", `attachment; filename="${filename}"`);
     }
-    return rangedResponse(bytes, request, headers);
+    if (range.partial) headers.set("Content-Range", `bytes ${range.start}-${range.end}/${entry.size}`);
+    return new Response(request.method === "HEAD" ? null : bytes, { status: range.partial ? 206 : 200, headers });
   } catch (error) {
     return new Response("Decryption or integrity check failed", { status: 500, headers: { "Cache-Control": "no-store" } });
   }
