@@ -1084,9 +1084,17 @@ async function unlock(user) {
       coreModule = await readVaultModule("core");
       loadedModules.push(coreModule);
     }
-    if (isAdminUser(user) && moduleDefinitions().hawthorn) await initializeHawthornKey(coreModule);
-    if (allowedModules.includes("hawthorn") && moduleDefinitions().hawthorn) {
-      loadedModules.push(await readVaultModule("hawthorn"));
+    if (moduleDefinitions().hawthorn && (isAdminUser(user) || allowedModules.includes("hawthorn"))) {
+      try {
+        if (isAdminUser(user)) await initializeHawthornKey(coreModule);
+        if (allowedModules.includes("hawthorn")) loadedModules.push(await readVaultModule("hawthorn"));
+      } catch (error) {
+        // During a staged rollout the published client can arrive before the new
+        // Firestore rules/key document. Keep the already-authorized core portal
+        // usable; a hawthorn-only account must still fail closed.
+        if (!coreModule) throw error;
+        console.warn("Moduł mapy głogu nie jest jeszcze dostępny.", error);
+      }
     }
     if (!loadedModules.length) throw accessFailure("To konto nie ma udostępnionych modułów.");
     const manifest = {
