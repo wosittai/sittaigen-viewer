@@ -1,7 +1,7 @@
 "use strict";
 
 const MAGIC = "STV1";
-let rawKey = null;
+let rawKeys = new Map();
 let manifestByPath = new Map();
 let expiresAt = 0;
 const plaintextCache = new Map();
@@ -18,17 +18,25 @@ self.addEventListener("activate", event => event.waitUntil(self.clients.claim())
 self.addEventListener("message", event => {
   const reply = payload => event.ports[0]?.postMessage(payload);
   if (event.data?.type === "unlock") {
-    rawKey = new Uint8Array(event.data.key);
-    manifestByPath = new Map(event.data.manifest.files.map(file => [file.path, file]));
+    for (const key of rawKeys.values()) key.fill(0);
+    rawKeys = new Map();
+    manifestByPath = new Map();
+    for (const module of event.data.modules || []) {
+      rawKeys.set(module.id, new Uint8Array(module.key));
+      for (const file of module.manifest.files || []) {
+        manifestByPath.set(file.path, { ...file, moduleId: module.id });
+      }
+    }
     expiresAt = Number(event.data.expiresAt) || 0;
     plaintextCache.clear();
     cacheBytes = 0;
     finishSessionRecovery?.(true);
-    reply({ ok: true, files: manifestByPath.size });
+    reply({ ok: true, files: manifestByPath.size, modules: rawKeys.size });
     return;
   }
   if (event.data?.type === "lock") {
-    rawKey = null;
+    for (const key of rawKeys.values()) key.fill(0);
+    rawKeys.clear();
     manifestByPath.clear();
     expiresAt = 0;
     plaintextCache.clear();
@@ -44,11 +52,12 @@ function lockedResponse() {
 }
 
 function hasActiveSession() {
-  return Boolean(rawKey && expiresAt && Date.now() < expiresAt);
+  return Boolean(rawKeys.size && expiresAt && Date.now() < expiresAt);
 }
 
 function clearVaultSession() {
-  rawKey = null;
+  for (const key of rawKeys.values()) key.fill(0);
+  rawKeys.clear();
   manifestByPath.clear();
   plaintextCache.clear();
   cacheBytes = 0;
@@ -82,7 +91,9 @@ function requestSessionFromPortal() {
   return sessionRecovery;
 }
 
-async function importKey() {
+async function importKey(moduleId) {
+  const rawKey = rawKeys.get(moduleId);
+  if (!rawKey) throw new Error("Missing module key");
   return crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, ["decrypt"]);
 }
 
@@ -97,7 +108,7 @@ function remember(cacheKey, bytes) {
   cacheBytes += bytes.byteLength;
 }
 
-async function decryptBlob(blob, aadText, cacheKey) {
+async function decryptBlob(blob, aadText, cacheKey, moduleId) {
   if (plaintextCache.has(cacheKey)) {
     const cached = plaintextCache.get(cacheKey);
     plaintextCache.delete(cacheKey);
@@ -108,7 +119,7 @@ async function decryptBlob(blob, aadText, cacheKey) {
   if (!response.ok) throw new Error(`Encrypted object unavailable: ${response.status}`);
   const envelope = new Uint8Array(await response.arrayBuffer());
   if (new TextDecoder().decode(envelope.slice(0, 4)) !== MAGIC) throw new Error("Invalid object envelope");
-  const key = await importKey();
+  const key = await importKey(moduleId);
   const aad = new TextEncoder().encode(aadText);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: envelope.slice(4, 16), additionalData: aad, tagLength: 128 },
@@ -121,12 +132,12 @@ async function decryptBlob(blob, aadText, cacheKey) {
 }
 
 async function decryptFile(entry) {
-  return decryptBlob(entry.blob, `sittaigen-file-v1\0${entry.id}`, entry.id);
+  return decryptBlob(entry.blob, `sittaigen-file-v1\0${entry.id}`, `${entry.moduleId}:${entry.id}`, entry.moduleId);
 }
 
 async function decryptChunk(entry, index) {
   const chunk = entry.chunks[index];
-  return decryptBlob(chunk.blob, `sittaigen-file-v2\0${entry.id}\0${index}`, `${entry.id}:${index}`);
+  return decryptBlob(chunk.blob, `sittaigen-file-v2\0${entry.id}\0${index}`, `${entry.moduleId}:${entry.id}:${index}`, entry.moduleId);
 }
 
 function requestedRange(request, size) {

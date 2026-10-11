@@ -32,6 +32,11 @@ const DEVICE_TRUST_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 const ADMIN_EMAIL = "coinguard2024@gmail.com";
 const ACCESS_COLLECTION = "accessUsers";
 const LEGACY_EMAILS = new Set(["wosittai@gmail.com", "79elem@gmail.com"]);
+const ACCESS_MODULES = [
+  { id: "core", label: "SITTAI i mapy lasów" },
+  { id: "hawthorn", label: "Mapa głogu" }
+];
+const ALL_MODULE_IDS = ACCESS_MODULES.map(module => module.id);
 const CHALLENGE_WORDS = [
   { id: "word-0", text: "Uroczyście" },
   { id: "word-1", text: "przysięgam," },
@@ -64,7 +69,7 @@ const state = {
   suppressReadyOnce: false,
   unlocking: false,
   user: null,
-  vaultKey: null,
+  vaultModules: [],
   workerRegistration: null,
   wordBank: [],
   wordSlots: Array(CHALLENGE_WORDS.length).fill(null)
@@ -74,6 +79,13 @@ const elements = {};
 function $(id) { return document.getElementById(id); }
 function normalizedEmail(value) { return String(value || "").trim().toLowerCase(); }
 function isAdminUser(user = state.user) { return normalizedEmail(user?.email) === ADMIN_EMAIL; }
+function normalizedModules(record) {
+  if (record?.admin || record?.legacy || !Array.isArray(record?.modules)) return [...ALL_MODULE_IDS];
+  return ALL_MODULE_IDS.filter(moduleId => record.modules.includes(moduleId));
+}
+function moduleLabel(moduleId) {
+  return ACCESS_MODULES.find(module => module.id === moduleId)?.label || moduleId;
+}
 
 function setStatus(message, error = false) {
   elements.technicalStatus.textContent = message;
@@ -270,6 +282,23 @@ function base64urlToBytes(value) {
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
+function bytesToBase64url(value) {
+  let binary = "";
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function bytesKeyId(value) {
+  const digest = await crypto.subtle.digest("SHA-256", value);
+  return Array.from(new Uint8Array(digest)).slice(0, 12).map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function deriveModuleKey(masterKey, moduleId) {
+  const hmacKey = await crypto.subtle.importKey("raw", masterKey, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const message = new TextEncoder().encode(`sittaigen-module-key-v1\0${moduleId}`);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", hmacKey, message));
+}
+
 async function importKey(raw) {
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
 }
@@ -321,21 +350,20 @@ async function sendWorkerMessage(registration, payload) {
 
 async function primeWorkerSession() {
   const remaining = sessionRemaining();
-  if (!state.vaultKey || !state.manifest || remaining <= 0) {
+  if (!state.vaultModules.length || !state.manifest || remaining <= 0) {
     throw new Error("Sesja wygasła po 6 godzinach. Zaloguj się ponownie.");
   }
   const registration = state.workerRegistration || await navigator.serviceWorker.ready;
   state.workerRegistration = registration;
   return sendWorkerMessage(registration, {
     type: "unlock",
-    key: state.vaultKey,
-    manifest: state.manifest,
+    modules: state.vaultModules,
     expiresAt: state.sessionStartedAt + SESSION_TTL_MS
   });
 }
 
 async function recoverEmbeddedSession(reloadView = false) {
-  if (!state.user || !state.vaultKey || !state.manifest) return;
+  if (!state.user || !state.vaultModules.length || !state.manifest) return;
   if (!state.recoveryPromise) {
     state.recoveryPromise = primeWorkerSession().finally(() => {
       state.recoveryPromise = null;
@@ -648,6 +676,12 @@ function startAccessWatcher(user) {
     try {
       const record = snapshot.data();
       validateAccessRecord(record, false);
+      const previousModules = normalizedModules(state.accessRecord).join(",");
+      const nextModules = normalizedModules(record).join(",");
+      if (state.accessRecord && previousModules !== nextModules) {
+        void logout("Zakres udostępnionych modułów został zmieniony. Zaloguj się ponownie.");
+        return;
+      }
       state.accessRecord = record;
       scheduleAccessExpiry(record);
     } catch (error) {
@@ -717,6 +751,9 @@ function editAccessAccount(record) {
   elements.accessExpiresAt.value = toDateTimeInput(record.expiresAt);
   elements.accessMaxLogins.value = String(Number(record.maxLogins) || 0);
   elements.accessEnabled.checked = record.enabled === true;
+  const modules = normalizedModules(record);
+  elements.accessModuleCore.checked = modules.includes("core");
+  elements.accessModuleHawthorn.checked = modules.includes("hawthorn");
   elements.accessFormTitle.textContent = "Edytuj dostęp";
   elements.accessSubmitButton.textContent = "Zapisz zmiany";
   elements.accessCancelButton.hidden = false;
@@ -731,6 +768,8 @@ function resetAdminForm() {
   elements.accessDuration.value = "7d";
   elements.accessMaxLogins.value = "0";
   elements.accessEnabled.checked = true;
+  elements.accessModuleCore.checked = true;
+  elements.accessModuleHawthorn.checked = true;
   elements.accessFormTitle.textContent = "Dodaj konto";
   elements.accessSubmitButton.textContent = "Dodaj dostęp";
   elements.accessCancelButton.hidden = true;
@@ -777,6 +816,10 @@ function renderAdminUsers() {
     logins.append(createElement("strong", "", limit ? `${used} / ${limit}` : `${used} / bez limitu`));
     if (record.lastLoginAt) logins.append(createElement("small", "", `Ostatnie: ${formatDateTime(record.lastLoginAt)}`));
 
+    const modules = createElement("div", "access-user-fact");
+    modules.append(createElement("span", "", "MODUŁY"));
+    modules.append(createElement("strong", "", normalizedModules(record).map(moduleLabel).join(" · ")));
+
     const actions = createElement("div", "access-user-actions");
     actions.append(createAdminButton("Edytuj", () => editAccessAccount(record)));
     actions.append(createAdminButton("Wyzeruj licznik", async () => {
@@ -809,7 +852,7 @@ function renderAdminUsers() {
       setAdminStatus(`Dostęp ${record.email} został usunięty.`);
     }, "danger"));
 
-    card.append(identity, period, logins, actions);
+    card.append(identity, period, logins, modules, actions);
     elements.accessUserList.append(card);
   }
 }
@@ -869,12 +912,19 @@ function readAccessForm() {
   const maxLogins = Number(elements.accessMaxLogins.value);
   if (!Number.isInteger(maxLogins) || maxLogins < 0) throw new Error("Limit logowań musi być liczbą całkowitą od 0 wzwyż.");
 
+  const modules = [
+    elements.accessModuleCore.checked ? "core" : null,
+    elements.accessModuleHawthorn.checked ? "hawthorn" : null
+  ].filter(Boolean);
+  if (!modules.length) throw new Error("Wybierz co najmniej jeden udostępniony moduł.");
+
   return {
     email,
     enabled: elements.accessEnabled.checked,
     startsAt: startsDate ? Timestamp.fromDate(startsDate) : null,
     expiresAt: expiresDate ? Timestamp.fromDate(expiresDate) : null,
-    maxLogins
+    maxLogins,
+    modules
   };
 }
 
@@ -942,6 +992,7 @@ async function bootstrapLegacyUsers() {
       startsAt: null,
       expiresAt: null,
       maxLogins: 0,
+      modules: [...ALL_MODULE_IDS],
       loginCount: 0,
       lastAuthTime: 0,
       lastLoginAt: null,
@@ -953,6 +1004,69 @@ async function bootstrapLegacyUsers() {
   })).catch(() => { /* Existing rules may still await deployment. */ });
 }
 
+function moduleDefinitions() {
+  if (state.config.modules) return state.config.modules;
+  return {
+    core: {
+      keyDocumentPath: state.config.keyDocumentPath,
+      expectedKeyId: state.config.expectedKeyId,
+      manifestPath: "vault/manifest.bin",
+      manifestAad: MANIFEST_AAD
+    }
+  };
+}
+
+async function readVaultModule(moduleId) {
+  const definition = moduleDefinitions()[moduleId];
+  if (!definition) throw new Error(`Moduł ${moduleLabel(moduleId)} nie został jeszcze opublikowany.`);
+  let keySnapshot;
+  try {
+    keySnapshot = await getDoc(doc(state.db, definition.keyDocumentPath));
+  } catch (error) {
+    if (error.code === "permission-denied") throw accessFailure(`Brak dostępu do modułu: ${moduleLabel(moduleId)}.`);
+    throw new Error(`Nie można potwierdzić dostępu do modułu: ${moduleLabel(moduleId)}.`);
+  }
+  if (!keySnapshot.exists()) throw new Error(`Moduł ${moduleLabel(moduleId)} oczekuje na inicjalizację administratora.`);
+  const keyDocument = keySnapshot.data();
+  const rawKey = base64urlToBytes(keyDocument.key || "");
+  if (rawKey.length !== 32 || keyDocument.key_id !== definition.expectedKeyId) {
+    throw new Error(`Nie można potwierdzić integralności modułu: ${moduleLabel(moduleId)}.`);
+  }
+  const manifestResponse = await fetch(definition.manifestPath, { cache: "no-store" });
+  if (!manifestResponse.ok) throw new Error(`Nie można pobrać indeksu modułu: ${moduleLabel(moduleId)}.`);
+  const manifestRaw = await decryptEnvelope(
+    rawKey,
+    await manifestResponse.arrayBuffer(),
+    definition.manifestAad || MANIFEST_AAD
+  );
+  const manifest = JSON.parse(new TextDecoder().decode(manifestRaw));
+  if (manifest.key_id !== keyDocument.key_id || !Array.isArray(manifest.files) || !Array.isArray(manifest.projects)) {
+    throw new Error(`Kontrola integralności modułu ${moduleLabel(moduleId)} nie powiodła się.`);
+  }
+  return { id: moduleId, key: rawKey, manifest };
+}
+
+async function initializeHawthornKey(coreModule) {
+  const definition = moduleDefinitions().hawthorn;
+  if (!definition) return;
+  const reference = doc(state.db, definition.keyDocumentPath);
+  const current = await getDoc(reference);
+  if (current.exists()) return;
+  const key = await deriveModuleKey(coreModule.key, "hawthorn");
+  if (await bytesKeyId(key) !== definition.expectedKeyId) {
+    throw new Error("Nie można zainicjalizować klucza mapy głogu.");
+  }
+  await setDoc(reference, {
+    key: bytesToBase64url(key),
+    key_id: definition.expectedKeyId,
+    module: "hawthorn",
+    createdAt: serverTimestamp(),
+    createdBy: ADMIN_EMAIL,
+    updatedAt: serverTimestamp(),
+    updatedBy: ADMIN_EMAIL
+  });
+}
+
 async function unlock(user) {
   if (state.unlocking || state.user) return;
   state.unlocking = true;
@@ -962,39 +1076,33 @@ async function unlock(user) {
 
     state.accessRecord = await claimPortalAccess(user);
 
-    let keySnapshot;
-    try {
-      keySnapshot = await getDoc(doc(state.db, state.config.keyDocumentPath));
-    } catch (error) {
-      if (error.code === "permission-denied") throw new Error("To konto nie znajduje się na liście dostępu.");
-      throw new Error(`Nie można potwierdzić dostępu: ${error.code || error.message}`);
-    }
-    if (!keySnapshot.exists()) throw new Error("Przestrzeń nie została jeszcze udostępniona.");
-    const keyDocument = keySnapshot.data();
-    const rawKey = base64urlToBytes(keyDocument.key || "");
-    if (rawKey.length !== 32 || keyDocument.key_id !== state.config.expectedKeyId) {
-      throw new Error("Nie można potwierdzić integralności przestrzeni.");
-    }
-
     setStatus("Przygotowywanie prywatnej przestrzeni…");
-    const manifestResponse = await fetch("vault/manifest.bin", { cache: "no-store" });
-    if (!manifestResponse.ok) throw new Error("Nie można pobrać zaszyfrowanego indeksu.");
-    const manifestRaw = await decryptEnvelope(rawKey, await manifestResponse.arrayBuffer(), MANIFEST_AAD);
-    const manifest = JSON.parse(new TextDecoder().decode(manifestRaw));
-    if (manifest.key_id !== keyDocument.key_id || !Array.isArray(manifest.files)) {
-      throw new Error("Kontrola integralności przestrzeni nie powiodła się.");
+    const allowedModules = normalizedModules(state.accessRecord);
+    const loadedModules = [];
+    let coreModule = null;
+    if (allowedModules.includes("core") || isAdminUser(user)) {
+      coreModule = await readVaultModule("core");
+      loadedModules.push(coreModule);
     }
+    if (isAdminUser(user) && moduleDefinitions().hawthorn) await initializeHawthornKey(coreModule);
+    if (allowedModules.includes("hawthorn") && moduleDefinitions().hawthorn) {
+      loadedModules.push(await readVaultModule("hawthorn"));
+    }
+    if (!loadedModules.length) throw accessFailure("To konto nie ma udostępnionych modułów.");
+    const manifest = {
+      projects: loadedModules.flatMap(module => module.manifest.projects),
+      files: loadedModules.flatMap(module => module.manifest.files)
+    };
 
     const registration = state.workerRegistration || await navigator.serviceWorker.ready;
     state.workerRegistration = registration;
     await sendWorkerMessage(registration, {
       type: "unlock",
-      key: rawKey,
-      manifest,
+      modules: loadedModules,
       expiresAt: state.sessionStartedAt + SESSION_TTL_MS
     });
 
-    state.vaultKey = rawKey;
+    state.vaultModules = loadedModules;
     state.manifest = manifest;
     state.user = user;
     elements.securityState.dataset.state = "open";
@@ -1054,8 +1162,8 @@ async function logout(message = "Sesja została bezpiecznie zamknięta.") {
   state.adminUsers = [];
   state.authTime = 0;
   state.manifest = null;
-  if (state.vaultKey) state.vaultKey.fill(0);
-  state.vaultKey = null;
+  for (const module of state.vaultModules) module.key?.fill(0);
+  state.vaultModules = [];
   state.pendingUser = null;
   state.user = null;
   state.currentProject = null;
@@ -1126,6 +1234,8 @@ async function init() {
     accessForm: $("accessForm"),
     accessFormTitle: $("accessFormTitle"),
     accessMaxLogins: $("accessMaxLogins"),
+    accessModuleCore: $("accessModuleCore"),
+    accessModuleHawthorn: $("accessModuleHawthorn"),
     accessStartsAt: $("accessStartsAt"),
     accessSubmitButton: $("accessSubmitButton"),
     accessUserList: $("accessUserList"),

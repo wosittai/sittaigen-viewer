@@ -410,6 +410,9 @@ body.login-mode .access-panel {
 .admin-check span { display: grid; gap: 5px; }
 .admin-check strong { font-size: 12px; }
 .admin-check small { color: var(--faint); font: 10px/1.4 var(--mono); }
+.module-access { min-width:0; display:grid; gap:8px; margin:0; padding:0; border:0; }
+.module-access legend { margin:0 0 8px; padding:0; color:var(--muted); font:650 10px/1.35 var(--mono); letter-spacing:.04em; text-transform:uppercase; }
+.module-access .admin-check { margin:0; }
 .access-form-actions { display: grid; gap: 8px; }
 .primary-button.compact { min-height: 48px; grid-template-columns: 1fr 20px; padding-left: 20px; }
 .access-register { min-width: 0; padding: 28px; }
@@ -417,7 +420,7 @@ body.login-mode .access-panel {
 .admin-status { max-width: 320px; margin: 0; color: var(--verified); font: 9px/1.5 var(--mono); text-align: right; text-transform: uppercase; letter-spacing: .04em; }
 .admin-status.error { color: var(--danger); }
 .access-user-list { display: grid; }
-.access-user { display: grid; grid-template-columns: minmax(190px, 1.15fr) minmax(210px, 1.4fr) minmax(140px, .75fr); gap: 18px; padding: 22px 0; border-bottom: 1px solid var(--line); }
+.access-user { display: grid; grid-template-columns: minmax(180px, 1.1fr) minmax(190px, 1.2fr) minmax(130px, .7fr) minmax(160px, .9fr); gap: 18px; padding: 22px 0; border-bottom: 1px solid var(--line); }
 .access-user:last-child { border-bottom: 0; }
 .access-user-identity { min-width: 0; display: flex; align-items: flex-start; flex-direction: column; gap: 10px; }
 .access-user-identity > strong { max-width: 100%; overflow: hidden; font: 650 12px/1.35 var(--mono); text-overflow: ellipsis; }

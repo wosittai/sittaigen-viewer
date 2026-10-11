@@ -7,5 +7,19 @@
     "projectId": "sittaigen-secure-viewer"
   },
   "keyDocumentPath": "vaults/sittaigen",
+  "modules": {
+    "core": {
+      "expectedKeyId": "cc54d222c9f477b644381a41",
+      "keyDocumentPath": "vaults/sittaigen",
+      "manifestAad": "sittaigen-manifest-v1",
+      "manifestPath": "vault/manifest.bin"
+    },
+    "hawthorn": {
+      "expectedKeyId": "e88c66c5073fc1cb69d66ceb",
+      "keyDocumentPath": "vaultModules/hawthorn",
+      "manifestAad": "sittaigen-module-manifest-v1\u0000hawthorn",
+      "manifestPath": "vault-modules/hawthorn/manifest.bin"
+    }
+  },
   "version": 2
 }

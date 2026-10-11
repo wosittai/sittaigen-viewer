@@ -2,14 +2,13 @@
 
 ## Widoki desktopowy i mobilny
 
-- Utwór: „Droga Stu Zakrętów w Dolinie Pięciu Jezior”
-- Autor: Arkadiusz Czarnecki
-- Źródło: https://www.polczyn-zdroj.pl/page/o-szwajcarii-polczynskiej
-- Plik źródłowy: https://www.polczyn-zdroj.pl/sites/default/files/galerie/2023-02/dji_export_1667751089073.jpg
+- Utwór: „Szwajcaria Połczyńska w listopadzie 2011” (kadr IMGP8806)
+- Autor: Tadeusz Dużyński
+- Źródło: https://tduzynski.pl/zachodniopomorskie
+- Plik źródłowy: https://tduzynski.pl/lib/kb9pqq/2011-11-06IMGP8806-Szwajcaria-Polczynska-w-listopadzie-2011-m2-m1saejm3.jpg
 - Zmiany: skalowanie i kompresja WebP dla desktopu; osobny pionowy kadr,
   skalowanie i kompresja WebP dla urządzeń mobilnych. Kolory i zawartość
   fotografii nie były generowane ani zmieniane.
 
-Oficjalna galeria gminy identyfikuje miejsce, tytuł i autora, ale nie publikuje
-otwartej licencji. Należy potwierdzić zgodę na dalszą publiczną publikację
-fotografii.
+Strona autora identyfikuje serię i autora, ale nie publikuje otwartej licencji.
+Należy potwierdzić zgodę autora na dalszą publiczną publikację fotografii.
