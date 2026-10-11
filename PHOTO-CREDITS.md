@@ -2,13 +2,14 @@
 
 ## Widoki desktopowy i mobilny
 
-- Utwór: fotografia Jeziora Krzywego w rezerwacie Dolina Pięciu Jezior
-- Autor: Ana McGurran
-- Źródło: https://www.dzikiezdroje.pl/rezerwatpieciujezior.html
-- Plik źródłowy: https://www.dzikiezdroje.pl/uploads/1/3/9/2/139245630/img-7133-2_orig.jpg
-- Zmiany: osobne kadry, powiększenie, kompresja WebP oraz selektywna korekcja
-  kolorów istniejącego listowia z użyciem narzędzia OpenAI do edycji obrazu.
+- Utwór: „Droga Stu Zakrętów w Dolinie Pięciu Jezior”
+- Autor: Arkadiusz Czarnecki
+- Źródło: https://www.polczyn-zdroj.pl/page/o-szwajcarii-polczynskiej
+- Plik źródłowy: https://www.polczyn-zdroj.pl/sites/default/files/galerie/2023-02/dji_export_1667751089073.jpg
+- Zmiany: skalowanie i kompresja WebP dla desktopu; osobny pionowy kadr,
+  skalowanie i kompresja WebP dla urządzeń mobilnych. Kolory i zawartość
+  fotografii nie były generowane ani zmieniane.
 
-Strona źródłowa identyfikuje miejsce i autora, ale nie publikuje otwartej licencji.
-Przed użyciem portalu poza prywatną strefą należy potwierdzić prawo dalszej
-publikacji fotografii.
+Oficjalna galeria gminy identyfikuje miejsce, tytuł i autora, ale nie publikuje
+otwartej licencji. Należy potwierdzić zgodę na dalszą publiczną publikację
+fotografii.
