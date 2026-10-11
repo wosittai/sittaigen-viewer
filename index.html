@@ -8,8 +8,8 @@
   <meta name="theme-color" content="#0b0d0f">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; connect-src 'self' https://*.googleapis.com https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://firestore.googleapis.com; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com; img-src 'self' data: https://*.googleusercontent.com; style-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com">
   <title>Portal prywatny — dostęp</title>
-  <link rel="stylesheet" href="styles.css?v=4">
-  <script type="module" src="app.js?v=4"></script>
+  <link rel="stylesheet" href="styles.css?v=5">
+  <script type="module" src="app.js?v=5"></script>
 </head>
 <body>
   <header class="masthead">
@@ -74,6 +74,97 @@
       <div class="dashboard-note">
         <span class="note-line" aria-hidden="true"></span>
         <p>Zawartość projektów jest odszyfrowywana lokalnie i nie jest zapisywana w pamięci trwałej tej strony.</p>
+      </div>
+    </section>
+
+    <section class="admin-panel" id="adminPanel" hidden>
+      <div class="admin-toolbar">
+        <button class="back-button" id="adminBackButton" type="button" aria-label="Wróć do listy projektów">
+          <span aria-hidden="true">←</span><span>Projekty</span>
+        </button>
+        <div class="admin-title">
+          <p class="section-code">ADMIN / ACCESS CONTROL</p>
+          <strong>Zarządzanie dostępem</strong>
+        </div>
+        <div class="admin-counter"><span id="adminUserCount">0</span><small>KONT</small></div>
+        <button id="adminLogoutButton" type="button" class="lock-button">Wyloguj</button>
+      </div>
+
+      <div class="admin-intro">
+        <div>
+          <p class="section-code">PRIVATE WORKSPACE / AUTHORIZATION</p>
+          <h1>Kontrola kont</h1>
+        </div>
+        <p>Dodawaj konta Google, ustawiaj okres dostępu i limit nowych logowań. Zmiany obowiązują bez ponownej publikacji strony.</p>
+      </div>
+
+      <div class="admin-layout">
+        <form class="access-form" id="accessForm" autocomplete="off">
+          <div class="access-form-head">
+            <p class="section-code">ACCOUNT POLICY</p>
+            <h2 id="accessFormTitle">Dodaj konto</h2>
+          </div>
+
+          <label class="admin-field">
+            <span>Adres e-mail Google</span>
+            <input id="accessEmail" name="email" type="email" inputmode="email" placeholder="konto@gmail.com" required>
+          </label>
+
+          <label class="admin-field">
+            <span>Dostęp od <small>(puste = od razu)</small></span>
+            <input id="accessStartsAt" name="startsAt" type="datetime-local">
+          </label>
+
+          <label class="admin-field">
+            <span>Czas dostępu</span>
+            <select id="accessDuration" name="duration">
+              <option value="3600000">1 godzina</option>
+              <option value="86400000">24 godziny</option>
+              <option value="604800000" selected>7 dni</option>
+              <option value="2592000000">30 dni</option>
+              <option value="7776000000">90 dni</option>
+              <option value="custom">Do konkretnej daty</option>
+              <option value="unlimited">Bezterminowo</option>
+            </select>
+          </label>
+
+          <label class="admin-field" id="accessExpiryField" data-disabled="true">
+            <span>Dostęp do</span>
+            <input id="accessExpiresAt" name="expiresAt" type="datetime-local" disabled>
+          </label>
+
+          <label class="admin-field">
+            <span>Limit logowań <small>(0 = bez limitu)</small></span>
+            <input id="accessMaxLogins" name="maxLogins" type="number" min="0" step="1" value="0" required>
+          </label>
+
+          <label class="admin-check">
+            <input id="accessEnabled" name="enabled" type="checkbox" checked>
+            <span><strong>Dostęp aktywny</strong><small>Możesz utworzyć konto już wstrzymane.</small></span>
+          </label>
+
+          <div class="access-form-actions">
+            <button class="primary-button compact" id="accessSubmitButton" type="submit">
+              <span>Dodaj dostęp</span><span class="button-arrow" aria-hidden="true">↗</span>
+            </button>
+            <button class="admin-action" id="accessCancelButton" type="button" hidden>Anuluj edycję</button>
+          </div>
+        </form>
+
+        <div class="access-register">
+          <div class="access-register-head">
+            <div>
+              <p class="section-code">AUTHORIZED ACCOUNTS</p>
+              <h2>Rejestr dostępów</h2>
+            </div>
+            <p class="admin-status" id="adminStatus" role="status">Pobieranie listy dostępów…</p>
+          </div>
+          <div class="access-user-list" id="accessUserList" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="admin-footnote">
+        Konto <strong>coinguard2024@gmail.com</strong> jest jedynym administratorem i nie podlega limitom z tej listy.
       </div>
     </section>
 

@@ -11,16 +11,37 @@ import {
   signInWithPopup,
   signOut
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
-import { doc, getDoc, getFirestore } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import {
+  collection,
+  doc,
+  getDoc,
+  getFirestore,
+  onSnapshot,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  updateDoc
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
 const MANIFEST_AAD = "sittaigen-manifest-v1";
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 const SESSION_STARTED_KEY = "private-portal-session-started-v1";
+const ADMIN_EMAIL = "coinguard2024@gmail.com";
+const ACCESS_COLLECTION = "accessUsers";
+const LEGACY_EMAILS = new Set(["wosittai@gmail.com", "79elem@gmail.com"]);
 const state = {
+  accessExpiryTimer: null,
+  accessRecord: null,
+  accessUnsubscribe: null,
+  adminUsers: [],
+  adminUsersUnsubscribe: null,
   auth: null,
+  authTime: 0,
   config: null,
   currentProject: null,
   db: null,
+  editingEmail: null,
   expiryTimer: null,
   manifest: null,
   sessionStartedAt: 0,
@@ -31,6 +52,8 @@ const state = {
 const elements = {};
 
 function $(id) { return document.getElementById(id); }
+function normalizedEmail(value) { return String(value || "").trim().toLowerCase(); }
+function isAdminUser(user = state.user) { return normalizedEmail(user?.email) === ADMIN_EMAIL; }
 
 function setStatus(message, error = false) {
   elements.technicalStatus.textContent = message;
@@ -124,14 +147,17 @@ function clearSessionStart() {
 async function verifiedSessionStart(user) {
   try {
     const token = await getIdTokenResult(user);
-    const authenticatedAt = Number(token.claims.auth_time) * 1000 || Date.parse(token.authTime);
+    const authTime = Number(token.claims.auth_time);
+    const authenticatedAt = authTime * 1000 || Date.parse(token.authTime);
     if (Number.isFinite(authenticatedAt) && authenticatedAt > 0) {
+      state.authTime = Number.isInteger(authTime) && authTime > 0 ? authTime : Math.floor(authenticatedAt / 1000);
       state.sessionStartedAt = authenticatedAt;
       try { localStorage.setItem(SESSION_STARTED_KEY, String(authenticatedAt)); }
       catch (_) { /* The signed token still provides the deadline for this tab. */ }
       return authenticatedAt;
     }
   } catch (_) { /* A stored timestamp remains a safe fallback for temporary token errors. */ }
+  state.authTime = Math.floor(sessionStart(true) / 1000);
   return sessionStart(true);
 }
 
@@ -169,6 +195,34 @@ function createElement(tag, className, text) {
   return element;
 }
 
+function createAdminCard(index) {
+  const card = createElement("button", "project-card admin-project-card");
+  card.type = "button";
+  card.dataset.variant = "admin";
+  card.setAttribute("aria-label", "Otwórz panel administracyjny");
+
+  const top = createElement("span", "project-card-top");
+  top.append(createElement("span", "project-code", "ADMIN / ACCESS CONTROL"));
+  top.append(createElement("span", "project-arrow", "↗"));
+
+  const visual = createElement("span", "project-visual admin-visual");
+  visual.setAttribute("aria-hidden", "true");
+  visual.append(createElement("i"), createElement("i"), createElement("i"));
+
+  const copy = createElement("span", "project-card-copy");
+  copy.append(createElement("strong", "project-title", "ADMIN"));
+  copy.append(createElement("span", "project-summary", "Konta, okresy dostępu i limity logowań do prywatnej przestrzeni."));
+
+  const meta = createElement("span", "project-meta");
+  meta.append(createElement("span", "", "Tylko administrator"));
+  meta.append(createElement("span", "", `${state.adminUsers.filter(item => !item.deleted).length || "—"} kont`));
+
+  card.append(top, visual, copy, meta);
+  card.style.setProperty("--project-index", index);
+  card.addEventListener("click", showAdminPanel);
+  return card;
+}
+
 function renderProjects() {
   elements.projectGrid.replaceChildren();
   const projects = state.manifest?.projects;
@@ -199,12 +253,15 @@ function renderProjects() {
     card.addEventListener("click", () => openProject(project));
     elements.projectGrid.append(card);
   });
+
+  if (isAdminUser()) elements.projectGrid.append(createAdminCard(projects.length));
 }
 
 function showDashboard() {
   state.currentProject = null;
   elements.portalFrame.src = "about:blank";
   elements.projectPanel.hidden = true;
+  elements.adminPanel.hidden = true;
   elements.accessPanel.hidden = true;
   elements.dashboardPanel.hidden = false;
   document.title = "Panel projektowy";
@@ -222,6 +279,7 @@ function openProject(project) {
   if (!Array.isArray(project.views) || !project.views.length) return;
   state.currentProject = project;
   elements.dashboardPanel.hidden = true;
+  elements.adminPanel.hidden = true;
   elements.projectPanel.hidden = false;
   elements.projectCode.textContent = project.code || "PROJECT";
   elements.projectName.textContent = project.name;
@@ -237,12 +295,422 @@ function openProject(project) {
   document.title = `${project.name} — Panel projektowy`;
 }
 
+function accessDocument(email) {
+  return doc(state.db, ACCESS_COLLECTION, normalizedEmail(email));
+}
+
+function timestampMillis(value) {
+  return value && typeof value.toMillis === "function" ? value.toMillis() : null;
+}
+
+function accessFailure(message) {
+  const error = new Error(message);
+  error.name = "AccessDeniedError";
+  return error;
+}
+
+function validateAccessRecord(record, countNewLogin) {
+  const now = Date.now();
+  const startsAt = timestampMillis(record.startsAt);
+  const expiresAt = timestampMillis(record.expiresAt);
+  const maxLogins = Number(record.maxLogins) || 0;
+  const loginCount = Number(record.loginCount) || 0;
+
+  if (record.deleted || record.enabled !== true) throw accessFailure("Dostęp tego konta został wyłączony.");
+  if (startsAt && startsAt > now) throw accessFailure(`Dostęp rozpocznie się ${formatDateTime(record.startsAt)}.`);
+  if (expiresAt && expiresAt <= now) throw accessFailure("Czas dostępu tego konta już wygasł.");
+  if (maxLogins > 0 && loginCount > maxLogins) throw accessFailure("Limit logowań tego konta został przekroczony.");
+  if (countNewLogin && maxLogins > 0 && loginCount >= maxLogins) {
+    throw accessFailure("Wykorzystano limit logowań tego konta.");
+  }
+}
+
+async function claimPortalAccess(user) {
+  const email = normalizedEmail(user.email);
+  if (email === ADMIN_EMAIL) return { admin: true, email };
+
+  try {
+    return await runTransaction(state.db, async transaction => {
+      const reference = accessDocument(email);
+      const snapshot = await transaction.get(reference);
+      if (!snapshot.exists()) {
+        if (LEGACY_EMAILS.has(email)) return { email, legacy: true };
+        throw accessFailure("To konto nie znajduje się na liście dostępu.");
+      }
+
+      const record = snapshot.data();
+      const countNewLogin = Number(record.lastAuthTime) !== state.authTime;
+      validateAccessRecord(record, countNewLogin);
+      if (countNewLogin) {
+        transaction.update(reference, {
+          lastAuthTime: state.authTime,
+          lastLoginAt: serverTimestamp(),
+          loginCount: (Number(record.loginCount) || 0) + 1
+        });
+      }
+      return {
+        ...record,
+        email,
+        loginCount: (Number(record.loginCount) || 0) + (countNewLogin ? 1 : 0),
+        lastAuthTime: state.authTime
+      };
+    });
+  } catch (error) {
+    if (LEGACY_EMAILS.has(email) && error.code === "permission-denied") return { email, legacy: true };
+    if (error.name === "AccessDeniedError") throw error;
+    if (error.code === "permission-denied") throw accessFailure("To konto nie ma aktywnego dostępu.");
+    throw error;
+  }
+}
+
+function stopAccessWatcher() {
+  if (state.accessUnsubscribe) state.accessUnsubscribe();
+  state.accessUnsubscribe = null;
+  clearTimeout(state.accessExpiryTimer);
+  state.accessExpiryTimer = null;
+}
+
+function scheduleAccessExpiry(record) {
+  clearTimeout(state.accessExpiryTimer);
+  state.accessExpiryTimer = null;
+  const expiresAt = timestampMillis(record?.expiresAt);
+  if (!expiresAt) return;
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    void logout("Czas dostępu tego konta wygasł.");
+    return;
+  }
+  state.accessExpiryTimer = setTimeout(
+    () => scheduleAccessExpiry(record),
+    Math.min(remaining + 250, 2147483647)
+  );
+}
+
+function startAccessWatcher(user) {
+  stopAccessWatcher();
+  if (isAdminUser(user)) return;
+  const email = normalizedEmail(user.email);
+  state.accessUnsubscribe = onSnapshot(accessDocument(email), snapshot => {
+    if (!state.user) return;
+    if (!snapshot.exists()) {
+      if (!LEGACY_EMAILS.has(email)) void logout("Dostęp tego konta został usunięty.");
+      return;
+    }
+    try {
+      const record = snapshot.data();
+      validateAccessRecord(record, false);
+      state.accessRecord = record;
+      scheduleAccessExpiry(record);
+    } catch (error) {
+      void logout(error.message || "Dostęp tego konta został zakończony.");
+    }
+  }, error => {
+    if (error.code !== "permission-denied" || !LEGACY_EMAILS.has(email)) {
+      void logout("Nie można już potwierdzić uprawnień tego konta.");
+    }
+  });
+}
+
+function formatDateTime(value) {
+  const milliseconds = timestampMillis(value);
+  if (!milliseconds) return "bez terminu";
+  return new Intl.DateTimeFormat("pl-PL", {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(milliseconds));
+}
+
+function toDateTimeInput(value) {
+  const milliseconds = timestampMillis(value);
+  if (!milliseconds) return "";
+  const date = new Date(milliseconds);
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 16);
+}
+
+function accessState(record) {
+  const now = Date.now();
+  const startsAt = timestampMillis(record.startsAt);
+  const expiresAt = timestampMillis(record.expiresAt);
+  if (record.deleted || record.enabled !== true) return { code: "disabled", label: "Wyłączony" };
+  if (startsAt && startsAt > now) return { code: "planned", label: "Zaplanowany" };
+  if (expiresAt && expiresAt <= now) return { code: "expired", label: "Wygasł" };
+  return { code: "active", label: "Aktywny" };
+}
+
+function setAdminStatus(message, error = false) {
+  elements.adminStatus.textContent = message;
+  elements.adminStatus.classList.toggle("error", error);
+}
+
+function createAdminButton(label, action, tone = "") {
+  const button = createElement("button", `admin-action ${tone}`.trim(), label);
+  button.type = "button";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await action();
+    } catch (error) {
+      setAdminStatus(error.message || "Nie udało się zapisać zmiany.", true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+function editAccessAccount(record) {
+  state.editingEmail = record.email;
+  elements.accessEmail.value = record.email;
+  elements.accessEmail.readOnly = true;
+  elements.accessStartsAt.value = toDateTimeInput(record.startsAt);
+  elements.accessDuration.value = record.expiresAt ? "custom" : "unlimited";
+  elements.accessExpiresAt.value = toDateTimeInput(record.expiresAt);
+  elements.accessMaxLogins.value = String(Number(record.maxLogins) || 0);
+  elements.accessEnabled.checked = record.enabled === true;
+  elements.accessFormTitle.textContent = "Edytuj dostęp";
+  elements.accessSubmitButton.textContent = "Zapisz zmiany";
+  elements.accessCancelButton.hidden = false;
+  updateDurationControl();
+  elements.accessForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function resetAdminForm() {
+  state.editingEmail = null;
+  elements.accessForm.reset();
+  elements.accessEmail.readOnly = false;
+  elements.accessDuration.value = "7d";
+  elements.accessMaxLogins.value = "0";
+  elements.accessEnabled.checked = true;
+  elements.accessFormTitle.textContent = "Dodaj konto";
+  elements.accessSubmitButton.textContent = "Dodaj dostęp";
+  elements.accessCancelButton.hidden = true;
+  updateDurationControl();
+}
+
+function updateDurationControl() {
+  const custom = elements.accessDuration.value === "custom";
+  elements.accessExpiresAt.disabled = !custom;
+  elements.accessExpiresAt.required = custom;
+  elements.accessExpiryField.dataset.disabled = String(!custom);
+}
+
+function renderAdminUsers() {
+  const users = state.adminUsers
+    .filter(record => !record.deleted)
+    .sort((a, b) => a.email.localeCompare(b.email, "pl"));
+  elements.adminUserCount.textContent = String(users.length);
+  elements.accessUserList.replaceChildren();
+
+  if (!users.length) {
+    elements.accessUserList.append(createElement("p", "admin-empty", "Brak dodanych kont. Administrator ma dostęp niezależny od tej listy."));
+    return;
+  }
+
+  for (const record of users) {
+    const card = createElement("article", "access-user");
+    const stateInfo = accessState(record);
+
+    const identity = createElement("div", "access-user-identity");
+    identity.append(createElement("strong", "", record.email));
+    identity.append(createElement("span", `access-badge ${stateInfo.code}`, stateInfo.label));
+
+    const period = createElement("div", "access-user-fact");
+    period.append(createElement("span", "", "OKRES DOSTĘPU"));
+    const start = record.startsAt ? formatDateTime(record.startsAt) : "od razu";
+    const end = record.expiresAt ? formatDateTime(record.expiresAt) : "bezterminowo";
+    period.append(createElement("strong", "", `${start} → ${end}`));
+
+    const logins = createElement("div", "access-user-fact");
+    logins.append(createElement("span", "", "LOGOWANIA"));
+    const used = Number(record.loginCount) || 0;
+    const limit = Number(record.maxLogins) || 0;
+    logins.append(createElement("strong", "", limit ? `${used} / ${limit}` : `${used} / bez limitu`));
+    if (record.lastLoginAt) logins.append(createElement("small", "", `Ostatnie: ${formatDateTime(record.lastLoginAt)}`));
+
+    const actions = createElement("div", "access-user-actions");
+    actions.append(createAdminButton("Edytuj", () => editAccessAccount(record)));
+    actions.append(createAdminButton("Wyzeruj licznik", async () => {
+      await updateDoc(accessDocument(record.email), {
+        lastAuthTime: 0,
+        lastLoginAt: null,
+        loginCount: 0,
+        updatedAt: serverTimestamp(),
+        updatedBy: ADMIN_EMAIL
+      });
+      setAdminStatus(`Licznik ${record.email} został wyzerowany.`);
+    }));
+    actions.append(createAdminButton(record.enabled ? "Wstrzymaj" : "Włącz", async () => {
+      await updateDoc(accessDocument(record.email), {
+        enabled: !record.enabled,
+        updatedAt: serverTimestamp(),
+        updatedBy: ADMIN_EMAIL
+      });
+      setAdminStatus(record.enabled ? `Dostęp ${record.email} został wstrzymany.` : `Dostęp ${record.email} został włączony.`);
+    }, record.enabled ? "warning" : "positive"));
+    actions.append(createAdminButton("Usuń dostęp", async () => {
+      if (!window.confirm(`Odebrać i usunąć dostęp dla ${record.email}?`)) return;
+      await updateDoc(accessDocument(record.email), {
+        deleted: true,
+        enabled: false,
+        updatedAt: serverTimestamp(),
+        updatedBy: ADMIN_EMAIL
+      });
+      if (state.editingEmail === record.email) resetAdminForm();
+      setAdminStatus(`Dostęp ${record.email} został usunięty.`);
+    }, "danger"));
+
+    card.append(identity, period, logins, actions);
+    elements.accessUserList.append(card);
+  }
+}
+
+function startAdminUsersListener() {
+  if (state.adminUsersUnsubscribe) return;
+  setAdminStatus("Pobieranie listy dostępów…");
+  state.adminUsersUnsubscribe = onSnapshot(collection(state.db, ACCESS_COLLECTION), snapshot => {
+    state.adminUsers = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
+    renderAdminUsers();
+    if (state.manifest) renderProjects();
+    setAdminStatus("Zmiany są zapisywane i stosowane na żywo.");
+  }, error => {
+    setAdminStatus(
+      error.code === "permission-denied"
+        ? "Panel jest gotowy, ale nowe reguły Firestore nie zostały jeszcze opublikowane."
+        : (error.message || "Nie udało się pobrać listy kont."),
+      true
+    );
+  });
+}
+
+function showAdminPanel() {
+  if (!isAdminUser()) return;
+  elements.portalFrame.src = "about:blank";
+  elements.projectPanel.hidden = true;
+  elements.dashboardPanel.hidden = true;
+  elements.accessPanel.hidden = true;
+  elements.adminPanel.hidden = false;
+  document.title = "ADMIN — Panel projektowy";
+  startAdminUsersListener();
+}
+
+function readAccessForm() {
+  const email = normalizedEmail(elements.accessEmail.value);
+  if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error("Wpisz poprawny adres e-mail.");
+  if (email === ADMIN_EMAIL) throw new Error("Konto administratora nie wymaga rekordu dostępu.");
+
+  const startsDate = elements.accessStartsAt.value ? new Date(elements.accessStartsAt.value) : null;
+  if (startsDate && Number.isNaN(startsDate.getTime())) throw new Error("Nieprawidłowa data rozpoczęcia.");
+
+  const duration = elements.accessDuration.value;
+  let expiresDate = null;
+  if (duration === "custom") {
+    expiresDate = new Date(elements.accessExpiresAt.value);
+    if (Number.isNaN(expiresDate.getTime())) throw new Error("Wybierz datę zakończenia dostępu.");
+  } else if (duration !== "unlimited") {
+    const durationMs = Number(duration);
+    const base = startsDate?.getTime() || Date.now();
+    expiresDate = new Date(base + durationMs);
+  }
+  if (expiresDate && expiresDate.getTime() <= (startsDate?.getTime() || Date.now())) {
+    throw new Error("Data zakończenia musi być późniejsza niż rozpoczęcie dostępu.");
+  }
+
+  const maxLogins = Number(elements.accessMaxLogins.value);
+  if (!Number.isInteger(maxLogins) || maxLogins < 0) throw new Error("Limit logowań musi być liczbą całkowitą od 0 wzwyż.");
+
+  return {
+    email,
+    enabled: elements.accessEnabled.checked,
+    startsAt: startsDate ? Timestamp.fromDate(startsDate) : null,
+    expiresAt: expiresDate ? Timestamp.fromDate(expiresDate) : null,
+    maxLogins
+  };
+}
+
+async function saveAccessAccount(event) {
+  event.preventDefault();
+  elements.accessSubmitButton.disabled = true;
+  try {
+    const values = readAccessForm();
+    const reference = accessDocument(values.email);
+    const existing = await getDoc(reference);
+    const listed = state.adminUsers.find(record => record.email === values.email && !record.deleted);
+    if (!state.editingEmail && listed) throw new Error("To konto już istnieje. Użyj przycisku Edytuj.");
+
+    if (state.editingEmail) {
+      await updateDoc(reference, {
+        ...values,
+        deleted: false,
+        updatedAt: serverTimestamp(),
+        updatedBy: ADMIN_EMAIL
+      });
+      setAdminStatus(`Zapisano ustawienia ${values.email}.`);
+    } else if (existing.exists()) {
+      await updateDoc(reference, {
+        ...values,
+        deleted: false,
+        lastAuthTime: 0,
+        lastLoginAt: null,
+        loginCount: 0,
+        updatedAt: serverTimestamp(),
+        updatedBy: ADMIN_EMAIL
+      });
+      setAdminStatus(`Ponownie nadano dostęp ${values.email}.`);
+    } else {
+      await setDoc(reference, {
+        ...values,
+        deleted: false,
+        lastAuthTime: 0,
+        lastLoginAt: null,
+        loginCount: 0,
+        createdAt: serverTimestamp(),
+        createdBy: ADMIN_EMAIL,
+        updatedAt: serverTimestamp(),
+        updatedBy: ADMIN_EMAIL
+      });
+      setAdminStatus(`Dodano dostęp dla ${values.email}.`);
+    }
+    resetAdminForm();
+  } catch (error) {
+    setAdminStatus(error.message || "Nie udało się zapisać konta.", true);
+  } finally {
+    elements.accessSubmitButton.disabled = false;
+  }
+}
+
+async function bootstrapLegacyUsers() {
+  if (!isAdminUser()) return;
+  await Promise.all([...LEGACY_EMAILS].map(async email => {
+    const reference = accessDocument(email);
+    const snapshot = await getDoc(reference);
+    if (snapshot.exists()) return;
+    await setDoc(reference, {
+      email,
+      deleted: false,
+      enabled: true,
+      startsAt: null,
+      expiresAt: null,
+      maxLogins: 0,
+      loginCount: 0,
+      lastAuthTime: 0,
+      lastLoginAt: null,
+      createdAt: serverTimestamp(),
+      createdBy: ADMIN_EMAIL,
+      updatedAt: serverTimestamp(),
+      updatedBy: ADMIN_EMAIL
+    });
+  })).catch(() => { /* Existing rules may still await deployment. */ });
+}
+
 async function unlock(user) {
   if (state.unlocking || state.user) return;
   state.unlocking = true;
   try {
     if (!user.email || !user.emailVerified) throw new Error("Google nie potwierdził adresu e-mail.");
     setStatus("Sprawdzanie uprawnień…");
+
+    state.accessRecord = await claimPortalAccess(user);
 
     let keySnapshot;
     try {
@@ -283,6 +751,8 @@ async function unlock(user) {
     renderProjects();
     showDashboard();
     scheduleExpiry();
+    startAccessWatcher(user);
+    void bootstrapLegacyUsers();
   } finally {
     state.unlocking = false;
   }
@@ -315,13 +785,20 @@ async function lockWorker() {
 
 async function logout(message = "Sesja została bezpiecznie zamknięta.") {
   clearInterval(state.expiryTimer);
+  stopAccessWatcher();
+  if (state.adminUsersUnsubscribe) state.adminUsersUnsubscribe();
+  state.adminUsersUnsubscribe = null;
   await lockWorker();
   clearSessionStart();
+  state.accessRecord = null;
+  state.adminUsers = [];
+  state.authTime = 0;
   state.manifest = null;
   state.user = null;
   state.currentProject = null;
   elements.portalFrame.src = "about:blank";
   elements.projectPanel.hidden = true;
+  elements.adminPanel.hidden = true;
   elements.dashboardPanel.hidden = true;
   elements.accessPanel.hidden = false;
   elements.securityState.dataset.state = "locked";
@@ -367,6 +844,23 @@ async function restoreSession(user) {
 async function init() {
   Object.assign(elements, {
     accessPanel: $("accessPanel"),
+    accessCancelButton: $("accessCancelButton"),
+    accessDuration: $("accessDuration"),
+    accessEmail: $("accessEmail"),
+    accessEnabled: $("accessEnabled"),
+    accessExpiresAt: $("accessExpiresAt"),
+    accessExpiryField: $("accessExpiryField"),
+    accessForm: $("accessForm"),
+    accessFormTitle: $("accessFormTitle"),
+    accessMaxLogins: $("accessMaxLogins"),
+    accessStartsAt: $("accessStartsAt"),
+    accessSubmitButton: $("accessSubmitButton"),
+    accessUserList: $("accessUserList"),
+    adminBackButton: $("adminBackButton"),
+    adminLogoutButton: $("adminLogoutButton"),
+    adminPanel: $("adminPanel"),
+    adminStatus: $("adminStatus"),
+    adminUserCount: $("adminUserCount"),
     backButton: $("backButton"),
     dashboardIdentity: $("dashboardIdentity"),
     dashboardLogoutButton: $("dashboardLogoutButton"),
@@ -390,6 +884,11 @@ async function init() {
   elements.logoutButton.addEventListener("click", () => logout());
   elements.dashboardLogoutButton.addEventListener("click", () => logout());
   elements.backButton.addEventListener("click", showDashboard);
+  elements.adminBackButton.addEventListener("click", showDashboard);
+  elements.adminLogoutButton.addEventListener("click", () => logout());
+  elements.accessDuration.addEventListener("change", updateDurationControl);
+  elements.accessCancelButton.addEventListener("click", resetAdminForm);
+  elements.accessForm.addEventListener("submit", saveAccessAccount);
   elements.portalFrame.addEventListener("load", () => { elements.portalLoading.hidden = true; });
   window.addEventListener("focus", updateSessionLabel);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) updateSessionLabel(); });
@@ -398,6 +897,7 @@ async function init() {
   });
 
   try {
+    resetAdminForm();
     state.config = await fetchJson("config.json");
     await registerWorker();
     const values = Object.values(state.config.firebase || {});
