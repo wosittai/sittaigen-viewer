@@ -59,10 +59,13 @@ const state = {
   firebaseReady: false,
   manifest: null,
   pendingUser: null,
+  recoveryPromise: null,
   sessionStartedAt: 0,
   suppressReadyOnce: false,
   unlocking: false,
   user: null,
+  vaultKey: null,
+  workerRegistration: null,
   wordBank: [],
   wordSlots: Array(CHALLENGE_WORDS.length).fill(null)
 };
@@ -316,6 +319,41 @@ async function sendWorkerMessage(registration, payload) {
   });
 }
 
+async function primeWorkerSession() {
+  const remaining = sessionRemaining();
+  if (!state.vaultKey || !state.manifest || remaining <= 0) {
+    throw new Error("Sesja wygasła po 6 godzinach. Zaloguj się ponownie.");
+  }
+  const registration = state.workerRegistration || await navigator.serviceWorker.ready;
+  state.workerRegistration = registration;
+  return sendWorkerMessage(registration, {
+    type: "unlock",
+    key: state.vaultKey,
+    manifest: state.manifest,
+    expiresAt: state.sessionStartedAt + SESSION_TTL_MS
+  });
+}
+
+async function recoverEmbeddedSession(reloadView = false) {
+  if (!state.user || !state.vaultKey || !state.manifest) return;
+  if (!state.recoveryPromise) {
+    state.recoveryPromise = primeWorkerSession().finally(() => {
+      state.recoveryPromise = null;
+    });
+  }
+  try {
+    await state.recoveryPromise;
+    const viewUrl = elements.portalFrame.dataset.contentUrl;
+    if (reloadView && viewUrl && !elements.projectPanel.hidden) {
+      elements.portalLoading.hidden = false;
+      elements.portalFrame.src = viewUrl;
+    }
+  } catch (error) {
+    if (sessionRemaining() <= 0) await logout("Sesja wygasła po 6 godzinach. Zaloguj się ponownie.");
+    else setStatus(error.message || "Nie udało się wznowić widoku projektu.", true);
+  }
+}
+
 function contentUrl(path) {
   return `content/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
@@ -469,12 +507,20 @@ function showDashboard() {
   document.title = "Panel projektowy";
 }
 
-function setPortal(view, button) {
+async function setPortal(view, button) {
   if (!view?.path) return;
   elements.portalLoading.hidden = false;
   for (const item of elements.projectNav.querySelectorAll("button")) item.dataset.active = String(item === button);
   elements.portalFrame.title = `${state.currentProject.name} — ${view.label}`;
-  elements.portalFrame.src = contentUrl(view.path);
+  const viewUrl = contentUrl(view.path);
+  elements.portalFrame.dataset.contentUrl = viewUrl;
+  try {
+    await primeWorkerSession();
+    elements.portalFrame.src = viewUrl;
+  } catch (error) {
+    elements.portalLoading.textContent = error.message || "Nie udało się wznowić widoku.";
+    if (sessionRemaining() <= 0) await logout("Sesja wygasła po 6 godzinach. Zaloguj się ponownie.");
+  }
 }
 
 function openProject(project) {
@@ -491,9 +537,9 @@ function openProject(project) {
   project.views.forEach((view, index) => {
     const button = createElement("button", "", view.label);
     button.type = "button";
-    button.addEventListener("click", () => setPortal(view, button));
+    button.addEventListener("click", () => { void setPortal(view, button); });
     elements.projectNav.append(button);
-    if (index === 0) setPortal(view, button);
+    if (index === 0) void setPortal(view, button);
   });
   document.title = `${project.name} — Panel projektowy`;
 }
@@ -939,7 +985,8 @@ async function unlock(user) {
       throw new Error("Kontrola integralności przestrzeni nie powiodła się.");
     }
 
-    const registration = await navigator.serviceWorker.ready;
+    const registration = state.workerRegistration || await navigator.serviceWorker.ready;
+    state.workerRegistration = registration;
     await sendWorkerMessage(registration, {
       type: "unlock",
       key: rawKey,
@@ -947,6 +994,7 @@ async function unlock(user) {
       expiresAt: state.sessionStartedAt + SESSION_TTL_MS
     });
 
+    state.vaultKey = rawKey;
     state.manifest = manifest;
     state.user = user;
     elements.securityState.dataset.state = "open";
@@ -1006,10 +1054,13 @@ async function logout(message = "Sesja została bezpiecznie zamknięta.") {
   state.adminUsers = [];
   state.authTime = 0;
   state.manifest = null;
+  if (state.vaultKey) state.vaultKey.fill(0);
+  state.vaultKey = null;
   state.pendingUser = null;
   state.user = null;
   state.currentProject = null;
   elements.portalFrame.src = "about:blank";
+  delete elements.portalFrame.dataset.contentUrl;
   elements.projectPanel.hidden = true;
   elements.adminPanel.hidden = true;
   elements.dashboardPanel.hidden = true;
@@ -1116,8 +1167,24 @@ async function init() {
   elements.accessCancelButton.addEventListener("click", resetAdminForm);
   elements.accessForm.addEventListener("submit", saveAccessAccount);
   elements.portalFrame.addEventListener("load", () => { elements.portalLoading.hidden = true; });
-  window.addEventListener("focus", updateSessionLabel);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) updateSessionLabel(); });
+  window.addEventListener("focus", () => {
+    updateSessionLabel();
+    if (state.user) void recoverEmbeddedSession();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      updateSessionLabel();
+      if (state.user) void recoverEmbeddedSession();
+    }
+  });
+  window.addEventListener("message", event => {
+    if (event.origin === location.origin && event.source === elements.portalFrame.contentWindow && event.data?.type === "sittaigen-vault-session-missing") {
+      void recoverEmbeddedSession(true);
+    }
+  });
+  navigator.serviceWorker?.addEventListener("message", event => {
+    if (event.data?.type === "sittaigen-vault-session-request") void recoverEmbeddedSession();
+  });
   window.addEventListener("storage", event => {
     if (event.key === SESSION_STARTED_KEY && !event.newValue && state.user) void logout();
   });
@@ -1126,7 +1193,7 @@ async function init() {
     await initializeDeviceTrust();
     resetAdminForm();
     state.config = await fetchJson("config.json");
-    await registerWorker();
+    state.workerRegistration = await registerWorker();
     const values = Object.values(state.config.firebase || {});
     if (!values.length || values.some(value => !value || String(value).startsWith("CONFIGURE_"))) {
       throw new Error("Administrator nie zakończył jeszcze konfiguracji dostępu.");

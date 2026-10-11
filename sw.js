@@ -6,6 +6,8 @@ let manifestByPath = new Map();
 let expiresAt = 0;
 const plaintextCache = new Map();
 let cacheBytes = 0;
+let sessionRecovery = null;
+let finishSessionRecovery = null;
 // Large archives are encrypted in independent 1 MiB chunks. This volatile LRU
 // keeps nearby map ranges fast without downloading or retaining a whole map.
 const MAX_CACHE_BYTES = 48 * 1024 * 1024;
@@ -21,6 +23,7 @@ self.addEventListener("message", event => {
     expiresAt = Number(event.data.expiresAt) || 0;
     plaintextCache.clear();
     cacheBytes = 0;
+    finishSessionRecovery?.(true);
     reply({ ok: true, files: manifestByPath.size });
     return;
   }
@@ -30,13 +33,53 @@ self.addEventListener("message", event => {
     expiresAt = 0;
     plaintextCache.clear();
     cacheBytes = 0;
+    finishSessionRecovery?.(false);
     reply({ ok: true });
   }
 });
 
 function lockedResponse() {
-  const body = `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Portal zablokowany</title><style>body{margin:0;background:#0b0d0f;color:#f3f1ec;font:16px system-ui;display:grid;place-items:center;min-height:100vh}main{max-width:520px;padding:40px;border:1px solid #3b4449;background:#111518}a{color:#d4a951}</style><main><h1>Portal zablokowany</h1><p>Sesja wygasła albo nie została uruchomiona.</p><p><a href="../">Wróć do strony logowania</a></p></main>`;
+  const body = `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Wznawianie sesji</title><style>body{margin:0;background:#0b0d0f;color:#d9d4c9;font:16px system-ui;display:grid;place-items:center;min-height:100vh}main{max-width:520px;padding:40px;text-align:center}a{color:#c9ad78}</style><main><h1>Wznawianie sesji…</h1><p>Jeżeli widok nie wróci automatycznie, przejdź do ekranu projektów.</p><p><a href="../">Wróć do projektów</a></p></main><script>if(parent!==window)parent.postMessage({type:"sittaigen-vault-session-missing"},location.origin)<\/script>`;
   return new Response(body, { status: 401, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+function hasActiveSession() {
+  return Boolean(rawKey && expiresAt && Date.now() < expiresAt);
+}
+
+function clearVaultSession() {
+  rawKey = null;
+  manifestByPath.clear();
+  plaintextCache.clear();
+  cacheBytes = 0;
+  expiresAt = 0;
+}
+
+function requestSessionFromPortal() {
+  if (hasActiveSession()) return Promise.resolve(true);
+  if (sessionRecovery) return sessionRecovery;
+
+  clearVaultSession();
+  sessionRecovery = new Promise(resolve => {
+    const timeout = setTimeout(() => complete(false), 6000);
+    const complete = recovered => {
+      if (!finishSessionRecovery) return;
+      clearTimeout(timeout);
+      finishSessionRecovery = null;
+      sessionRecovery = null;
+      resolve(Boolean(recovered && hasActiveSession()));
+    };
+    finishSessionRecovery = complete;
+
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(clients => {
+      if (!clients.length) {
+        complete(false);
+        return;
+      }
+      for (const client of clients) client.postMessage({ type: "sittaigen-vault-session-request" });
+    }).catch(() => complete(false));
+  });
+  return sessionRecovery;
 }
 
 async function importKey() {
@@ -126,12 +169,8 @@ async function readRange(entry, start, end) {
 }
 
 async function handleContent(request, encodedPath) {
-  if (!rawKey || !expiresAt || Date.now() >= expiresAt) {
-    rawKey = null;
-    manifestByPath.clear();
-    plaintextCache.clear();
-    cacheBytes = 0;
-    expiresAt = 0;
+  if (!hasActiveSession() && !(await requestSessionFromPortal())) {
+    clearVaultSession();
     return lockedResponse();
   }
   let path;
