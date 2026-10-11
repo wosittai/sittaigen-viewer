@@ -29,15 +29,9 @@ const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 const SESSION_STARTED_KEY = "private-portal-session-started-v1";
 const DEVICE_TRUST_KEY = "private-portal-device-trust-v1";
 const DEVICE_TRUST_TTL_MS = 180 * 24 * 60 * 60 * 1000;
-const LOGIN_SCENE_KEY = "private-portal-login-scene-v1";
 const ADMIN_EMAIL = "coinguard2024@gmail.com";
 const ACCESS_COLLECTION = "accessUsers";
 const LEGACY_EMAILS = new Set(["wosittai@gmail.com", "79elem@gmail.com"]);
-const LOGIN_SCENES = {
-  lakes: { name: "Dolina Pięciu Jezior", asset: "assets/polczyn-five-lakes.webp" },
-  park: { name: "Zalew / Park Zdrojowy", asset: "assets/polczyn-park-reservoir.webp" },
-  stream: { name: "Leśny potok", asset: "assets/polczyn-forest-stream.webp" }
-};
 const CHALLENGE_WORDS = [
   { id: "word-0", text: "Uroczyście" },
   { id: "word-1", text: "przysięgam," },
@@ -86,43 +80,6 @@ function setStatus(message, error = false) {
 function updateLoginAvailability() {
   if (!elements.loginButton) return;
   elements.loginButton.disabled = !(state.firebaseReady && state.deviceTrusted && !state.unlocking);
-}
-
-function setLoginScene(scene) {
-  if (!LOGIN_SCENES[scene]) return;
-  document.body.dataset.loginScene = scene;
-  if (elements.loginSceneName) elements.loginSceneName.textContent = LOGIN_SCENES[scene].name;
-  for (const button of document.querySelectorAll("[data-scene-choice]")) {
-    button.setAttribute("aria-pressed", String(button.dataset.sceneChoice === scene));
-  }
-  try { localStorage.setItem(LOGIN_SCENE_KEY, scene); }
-  catch (_) { /* The visual choice can remain tab-local. */ }
-}
-
-function initializeScenePicker() {
-  let initialScene = "lakes";
-  try {
-    const savedScene = localStorage.getItem(LOGIN_SCENE_KEY);
-    if (savedScene && LOGIN_SCENES[savedScene]) initialScene = savedScene;
-  } catch (_) { /* Keep the default scene. */ }
-  setLoginScene(initialScene);
-
-  const preloaded = new Set(["lakes"]);
-  const preload = scene => {
-    if (preloaded.has(scene) || !LOGIN_SCENES[scene]) return;
-    const image = new Image();
-    image.src = LOGIN_SCENES[scene].asset;
-    preloaded.add(scene);
-  };
-  for (const button of document.querySelectorAll("[data-scene-choice]")) {
-    const scene = button.dataset.sceneChoice;
-    button.addEventListener("pointerenter", () => preload(scene), { once: true });
-    button.addEventListener("focus", () => preload(scene), { once: true });
-    button.addEventListener("click", () => {
-      preload(scene);
-      setLoginScene(scene);
-    });
-  }
 }
 
 async function browserFingerprint() {
@@ -1133,7 +1090,6 @@ async function init() {
     challengeStatus: $("challengeStatus"),
     deviceChallenge: $("deviceChallenge"),
     loginButton: $("loginButton"),
-    loginSceneName: $("loginSceneName"),
     logoutButton: $("logoutButton"),
     portalFrame: $("portalFrame"),
     portalLoading: $("portalLoading"),
@@ -1167,7 +1123,6 @@ async function init() {
   });
 
   try {
-    initializeScenePicker();
     await initializeDeviceTrust();
     resetAdminForm();
     state.config = await fetchJson("config.json");
