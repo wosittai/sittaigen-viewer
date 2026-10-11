@@ -3,6 +3,7 @@
 const MAGIC = "STV1";
 let rawKey = null;
 let manifestByPath = new Map();
+let expiresAt = 0;
 const plaintextCache = new Map();
 let cacheBytes = 0;
 // The encrypted beech-map PMTiles archive is ~56 MiB. Keep it in volatile
@@ -17,6 +18,7 @@ self.addEventListener("message", event => {
   if (event.data?.type === "unlock") {
     rawKey = new Uint8Array(event.data.key);
     manifestByPath = new Map(event.data.manifest.files.map(file => [file.path, file]));
+    expiresAt = Number(event.data.expiresAt) || 0;
     plaintextCache.clear();
     cacheBytes = 0;
     reply({ ok: true, files: manifestByPath.size });
@@ -25,6 +27,7 @@ self.addEventListener("message", event => {
   if (event.data?.type === "lock") {
     rawKey = null;
     manifestByPath.clear();
+    expiresAt = 0;
     plaintextCache.clear();
     cacheBytes = 0;
     reply({ ok: true });
@@ -32,7 +35,7 @@ self.addEventListener("message", event => {
 });
 
 function lockedResponse() {
-  const body = `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Repozytorium zablokowane</title><style>body{margin:0;background:#0a0e11;color:#eef2f3;font:16px system-ui;display:grid;place-items:center;min-height:100vh}main{max-width:520px;padding:40px;border:1px solid #3a4850;background:#10161a}a{color:#c6a15b}</style><main><h1>Repozytorium zablokowane</h1><p>Sesja deszyfrująca wygasła albo nie została uruchomiona.</p><p><a href="../">Wróć do strony logowania</a></p></main>`;
+  const body = `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Portal zablokowany</title><style>body{margin:0;background:#0b0d0f;color:#f3f1ec;font:16px system-ui;display:grid;place-items:center;min-height:100vh}main{max-width:520px;padding:40px;border:1px solid #3b4449;background:#111518}a{color:#d4a951}</style><main><h1>Portal zablokowany</h1><p>Sesja wygasła albo nie została uruchomiona.</p><p><a href="../">Wróć do strony logowania</a></p></main>`;
   return new Response(body, { status: 401, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
@@ -80,7 +83,14 @@ function rangedResponse(bytes, request, headers) {
 }
 
 async function handleContent(request, encodedPath) {
-  if (!rawKey) return lockedResponse();
+  if (!rawKey || !expiresAt || Date.now() >= expiresAt) {
+    rawKey = null;
+    manifestByPath.clear();
+    plaintextCache.clear();
+    cacheBytes = 0;
+    expiresAt = 0;
+    return lockedResponse();
+  }
   let path;
   try { path = encodedPath.split("/").map(decodeURIComponent).join("/"); }
   catch (_) { return new Response("Invalid path", { status: 400 }); }

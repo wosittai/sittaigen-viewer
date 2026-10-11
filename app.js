@@ -2,9 +2,11 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import {
-  browserSessionPersistence,
+  browserLocalPersistence,
   getAuth,
+  getIdTokenResult,
   GoogleAuthProvider,
+  onAuthStateChanged,
   setPersistence,
   signInWithPopup,
   signOut
@@ -12,7 +14,20 @@ import {
 import { doc, getDoc, getFirestore } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
 const MANIFEST_AAD = "sittaigen-manifest-v1";
-const state = { config: null, manifest: null, user: null, auth: null, db: null };
+const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
+const SESSION_STARTED_KEY = "private-portal-session-started-v1";
+const state = {
+  auth: null,
+  config: null,
+  currentProject: null,
+  db: null,
+  expiryTimer: null,
+  manifest: null,
+  sessionStartedAt: 0,
+  suppressReadyOnce: false,
+  unlocking: false,
+  user: null
+};
 const elements = {};
 
 function $(id) { return document.getElementById(id); }
@@ -57,7 +72,8 @@ async function fetchJson(url) {
 
 async function registerWorker() {
   if (!("serviceWorker" in navigator)) throw new Error("Ta przeglądarka nie obsługuje bezpiecznego trybu odczytu.");
-  const registration = await navigator.serviceWorker.register("sw.js", { scope: "./" });
+  const registration = await navigator.serviceWorker.register("sw.js", { scope: "./", updateViaCache: "none" });
+  await registration.update();
   await navigator.serviceWorker.ready;
   return registration;
 }
@@ -80,52 +96,196 @@ function contentUrl(path) {
   return `content/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function setPortal(path, activeButton) {
-  elements.portalLoading.hidden = false;
-  for (const button of [elements.indexButton, elements.beechMapButton, elements.simulatorsButton, elements.combinedReportButton]) {
-    button.dataset.active = String(button === activeButton);
+function initials(user) {
+  const source = (user.displayName || user.email || "U").trim();
+  const parts = source.split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map(part => part[0]).join("").toUpperCase();
+}
+
+function sessionStart(createIfMissing = false) {
+  let value = 0;
+  try { value = Number(localStorage.getItem(SESSION_STARTED_KEY)) || 0; }
+  catch (_) { value = state.sessionStartedAt; }
+  if (!value && createIfMissing) {
+    value = Date.now();
+    try { localStorage.setItem(SESSION_STARTED_KEY, String(value)); }
+    catch (_) { /* The in-memory deadline still limits this tab. */ }
   }
-  elements.portalFrame.src = contentUrl(path);
+  state.sessionStartedAt = value;
+  return value;
+}
+
+function clearSessionStart() {
+  state.sessionStartedAt = 0;
+  try { localStorage.removeItem(SESSION_STARTED_KEY); }
+  catch (_) { /* Local storage may be disabled. */ }
+}
+
+async function verifiedSessionStart(user) {
+  try {
+    const token = await getIdTokenResult(user);
+    const authenticatedAt = Number(token.claims.auth_time) * 1000 || Date.parse(token.authTime);
+    if (Number.isFinite(authenticatedAt) && authenticatedAt > 0) {
+      state.sessionStartedAt = authenticatedAt;
+      try { localStorage.setItem(SESSION_STARTED_KEY, String(authenticatedAt)); }
+      catch (_) { /* The signed token still provides the deadline for this tab. */ }
+      return authenticatedAt;
+    }
+  } catch (_) { /* A stored timestamp remains a safe fallback for temporary token errors. */ }
+  return sessionStart(true);
+}
+
+function sessionRemaining() {
+  return state.sessionStartedAt ? state.sessionStartedAt + SESSION_TTL_MS - Date.now() : 0;
+}
+
+function formatRemaining(milliseconds) {
+  const totalMinutes = Math.max(0, Math.ceil(milliseconds / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function updateSessionLabel() {
+  if (!state.user) return;
+  const remaining = sessionRemaining();
+  if (remaining <= 0) {
+    void logout("Sesja wygasła po 6 godzinach. Zaloguj się ponownie.");
+    return;
+  }
+  elements.securityLabel.textContent = `Sesja aktywna · ${formatRemaining(remaining)}`;
+}
+
+function scheduleExpiry() {
+  clearInterval(state.expiryTimer);
+  updateSessionLabel();
+  state.expiryTimer = setInterval(updateSessionLabel, 30000);
+}
+
+function createElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+function renderProjects() {
+  elements.projectGrid.replaceChildren();
+  const projects = state.manifest?.projects;
+  if (!Array.isArray(projects) || !projects.length) throw new Error("Brak projektów w zaszyfrowanym indeksie.");
+
+  projects.forEach((project, index) => {
+    const card = createElement("button", "project-card");
+    card.type = "button";
+    card.dataset.variant = String(index % 4);
+    card.setAttribute("aria-label", `Otwórz projekt: ${project.name}`);
+
+    const top = createElement("span", "project-card-top");
+    top.append(createElement("span", "project-code", project.code || `PROJEKT ${String(index + 1).padStart(2, "0")}`));
+    top.append(createElement("span", "project-arrow", "↗"));
+
+    const visual = createElement("span", "project-visual");
+    visual.setAttribute("aria-hidden", "true");
+    visual.append(createElement("i"), createElement("i"), createElement("i"));
+
+    const copy = createElement("span", "project-card-copy");
+    copy.append(createElement("strong", "project-title", project.name));
+    copy.append(createElement("span", "project-summary", project.summary || ""));
+
+    const meta = createElement("span", "project-meta");
+    for (const item of project.meta || []) meta.append(createElement("span", "", item));
+
+    card.append(top, visual, copy, meta);
+    card.addEventListener("click", () => openProject(project));
+    elements.projectGrid.append(card);
+  });
+}
+
+function showDashboard() {
+  state.currentProject = null;
+  elements.portalFrame.src = "about:blank";
+  elements.projectPanel.hidden = true;
+  elements.accessPanel.hidden = true;
+  elements.dashboardPanel.hidden = false;
+  document.title = "Panel projektowy";
+}
+
+function setPortal(view, button) {
+  if (!view?.path) return;
+  elements.portalLoading.hidden = false;
+  for (const item of elements.projectNav.querySelectorAll("button")) item.dataset.active = String(item === button);
+  elements.portalFrame.title = `${state.currentProject.name} — ${view.label}`;
+  elements.portalFrame.src = contentUrl(view.path);
+}
+
+function openProject(project) {
+  if (!Array.isArray(project.views) || !project.views.length) return;
+  state.currentProject = project;
+  elements.dashboardPanel.hidden = true;
+  elements.projectPanel.hidden = false;
+  elements.projectCode.textContent = project.code || "PROJECT";
+  elements.projectName.textContent = project.name;
+  elements.projectNav.replaceChildren();
+
+  project.views.forEach((view, index) => {
+    const button = createElement("button", "", view.label);
+    button.type = "button";
+    button.addEventListener("click", () => setPortal(view, button));
+    elements.projectNav.append(button);
+    if (index === 0) setPortal(view, button);
+  });
+  document.title = `${project.name} — Panel projektowy`;
 }
 
 async function unlock(user) {
-  if (!user.email || !user.emailVerified) throw new Error("Google nie potwierdził adresu e-mail.");
-  setStatus("Sprawdzanie uprawnień i pobieranie klucza…");
-
-  let keySnapshot;
+  if (state.unlocking || state.user) return;
+  state.unlocking = true;
   try {
-    keySnapshot = await getDoc(doc(state.db, state.config.keyDocumentPath));
-  } catch (error) {
-    if (error.code === "permission-denied") throw new Error("To konto nie znajduje się na liście dostępu.");
-    throw new Error(`Nie można odczytać klucza: ${error.code || error.message}`);
-  }
-  if (!keySnapshot.exists()) throw new Error("Administrator nie opublikował klucza repozytorium.");
-  const keyDocument = keySnapshot.data();
-  const rawKey = base64urlToBytes(keyDocument.key || "");
-  if (rawKey.length !== 32 || keyDocument.key_id !== state.config.expectedKeyId) {
-    throw new Error("Klucz nie odpowiada opublikowanemu repozytorium.");
-  }
+    if (!user.email || !user.emailVerified) throw new Error("Google nie potwierdził adresu e-mail.");
+    setStatus("Sprawdzanie uprawnień…");
 
-  setStatus("Odszyfrowywanie i kontrola integralności manifestu…");
-  const manifestResponse = await fetch("vault/manifest.bin", { cache: "no-store" });
-  if (!manifestResponse.ok) throw new Error("Nie można pobrać zaszyfrowanego manifestu.");
-  const manifestRaw = await decryptEnvelope(rawKey, await manifestResponse.arrayBuffer(), MANIFEST_AAD);
-  const manifest = JSON.parse(new TextDecoder().decode(manifestRaw));
-  if (manifest.key_id !== keyDocument.key_id || !Array.isArray(manifest.files)) {
-    throw new Error("Kontrola integralności manifestu nie powiodła się.");
+    let keySnapshot;
+    try {
+      keySnapshot = await getDoc(doc(state.db, state.config.keyDocumentPath));
+    } catch (error) {
+      if (error.code === "permission-denied") throw new Error("To konto nie znajduje się na liście dostępu.");
+      throw new Error(`Nie można potwierdzić dostępu: ${error.code || error.message}`);
+    }
+    if (!keySnapshot.exists()) throw new Error("Przestrzeń nie została jeszcze udostępniona.");
+    const keyDocument = keySnapshot.data();
+    const rawKey = base64urlToBytes(keyDocument.key || "");
+    if (rawKey.length !== 32 || keyDocument.key_id !== state.config.expectedKeyId) {
+      throw new Error("Nie można potwierdzić integralności przestrzeni.");
+    }
+
+    setStatus("Przygotowywanie prywatnej przestrzeni…");
+    const manifestResponse = await fetch("vault/manifest.bin", { cache: "no-store" });
+    if (!manifestResponse.ok) throw new Error("Nie można pobrać zaszyfrowanego indeksu.");
+    const manifestRaw = await decryptEnvelope(rawKey, await manifestResponse.arrayBuffer(), MANIFEST_AAD);
+    const manifest = JSON.parse(new TextDecoder().decode(manifestRaw));
+    if (manifest.key_id !== keyDocument.key_id || !Array.isArray(manifest.files)) {
+      throw new Error("Kontrola integralności przestrzeni nie powiodła się.");
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    await sendWorkerMessage(registration, {
+      type: "unlock",
+      key: rawKey,
+      manifest,
+      expiresAt: state.sessionStartedAt + SESSION_TTL_MS
+    });
+
+    state.manifest = manifest;
+    state.user = user;
+    elements.securityState.dataset.state = "open";
+    elements.dashboardIdentity.textContent = user.email;
+    elements.userAvatar.textContent = initials(user);
+    renderProjects();
+    showDashboard();
+    scheduleExpiry();
+  } finally {
+    state.unlocking = false;
   }
-
-  const registration = await navigator.serviceWorker.ready;
-  await sendWorkerMessage(registration, { type: "unlock", key: rawKey, manifest });
-
-  state.manifest = manifest;
-  state.user = user;
-  elements.accessPanel.hidden = true;
-  elements.archivePanel.hidden = false;
-  elements.securityState.dataset.state = "open";
-  elements.securityLabel.textContent = "Sesja odszyfrowana";
-  elements.identityLine.textContent = `ZWERYFIKOWANO: ${user.email}`;
-  setPortal(manifest.main_entry || state.config.mainEntry, elements.indexButton);
 }
 
 async function login() {
@@ -134,36 +294,107 @@ async function login() {
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: "select_account" });
     const credential = await signInWithPopup(state.auth, provider);
+    await verifiedSessionStart(credential.user);
     await unlock(credential.user);
   } catch (error) {
     const cancelled = ["auth/popup-closed-by-user", "auth/cancelled-popup-request"].includes(error.code);
-    setStatus(cancelled ? "Logowanie zostało przerwane." : (error.message || "Nie udało się otworzyć repozytorium."), !cancelled);
+    setStatus(cancelled ? "Logowanie zostało przerwane." : (error.message || "Nie udało się otworzyć przestrzeni."), !cancelled);
+    if (!cancelled && state.auth?.currentUser) {
+      state.suppressReadyOnce = true;
+      await signOut(state.auth).catch(() => {});
+    }
   }
 }
 
-async function logout() {
+async function lockWorker() {
   try {
     const registration = await navigator.serviceWorker.ready;
     await sendWorkerMessage(registration, { type: "lock" });
   } catch (_) { /* The page is locked even if the worker has already stopped. */ }
-  if (state.auth) await signOut(state.auth).catch(() => {});
+}
+
+async function logout(message = "Sesja została bezpiecznie zamknięta.") {
+  clearInterval(state.expiryTimer);
+  await lockWorker();
+  clearSessionStart();
   state.manifest = null;
   state.user = null;
+  state.currentProject = null;
   elements.portalFrame.src = "about:blank";
-  elements.archivePanel.hidden = true;
+  elements.projectPanel.hidden = true;
+  elements.dashboardPanel.hidden = true;
   elements.accessPanel.hidden = false;
   elements.securityState.dataset.state = "locked";
-  elements.securityLabel.textContent = "Repozytorium zablokowane";
-  setStatus("Sesja została zamknięta. Klucz usunięto z pamięci przeglądarki.");
+  elements.securityLabel.textContent = "Dostęp zablokowany";
+  document.title = "Portal prywatny — dostęp";
+  setStatus(message);
+  if (state.auth?.currentUser) {
+    state.suppressReadyOnce = true;
+    await signOut(state.auth).catch(() => {});
+  }
+}
+
+async function restoreSession(user) {
+  if (!user) {
+    elements.loginButton.disabled = false;
+    if (state.suppressReadyOnce) {
+      state.suppressReadyOnce = false;
+      return;
+    }
+    if (state.user) {
+      await logout("Sesja autoryzacyjna została zakończona. Zaloguj się ponownie.");
+      return;
+    }
+    if (!state.user) setStatus("Środowisko gotowe. Oczekiwanie na autoryzację.");
+    return;
+  }
+
+  const startedAt = await verifiedSessionStart(user);
+  if (Date.now() - startedAt >= SESSION_TTL_MS) {
+    await logout("Poprzednia sesja wygasła. Zaloguj się ponownie.");
+    return;
+  }
+
+  try {
+    setStatus("Przywracanie bezpiecznej sesji…");
+    await unlock(user);
+  } catch (error) {
+    await logout(error.message || "Nie udało się przywrócić sesji.");
+    setStatus(error.message || "Nie udało się przywrócić sesji.", true);
+  }
 }
 
 async function init() {
   Object.assign(elements, {
-    accessPanel: $("accessPanel"), archivePanel: $("archivePanel"), loginButton: $("loginButton"),
-    logoutButton: $("logoutButton"), technicalStatus: $("technicalStatus"),
-    securityState: $("securityState"), securityLabel: $("securityLabel"), identityLine: $("identityLine"),
-    indexButton: $("indexButton"), beechMapButton: $("beechMapButton"), simulatorsButton: $("simulatorsButton"),
-    combinedReportButton: $("combinedReportButton"), portalFrame: $("portalFrame"), portalLoading: $("portalLoading")
+    accessPanel: $("accessPanel"),
+    backButton: $("backButton"),
+    dashboardIdentity: $("dashboardIdentity"),
+    dashboardLogoutButton: $("dashboardLogoutButton"),
+    dashboardPanel: $("dashboardPanel"),
+    loginButton: $("loginButton"),
+    logoutButton: $("logoutButton"),
+    portalFrame: $("portalFrame"),
+    portalLoading: $("portalLoading"),
+    projectCode: $("projectCode"),
+    projectGrid: $("projectGrid"),
+    projectName: $("projectName"),
+    projectNav: $("projectNav"),
+    projectPanel: $("projectPanel"),
+    securityLabel: $("securityLabel"),
+    securityState: $("securityState"),
+    technicalStatus: $("technicalStatus"),
+    userAvatar: $("userAvatar")
+  });
+
+  elements.loginButton.addEventListener("click", login);
+  elements.logoutButton.addEventListener("click", () => logout());
+  elements.dashboardLogoutButton.addEventListener("click", () => logout());
+  elements.backButton.addEventListener("click", showDashboard);
+  elements.portalFrame.addEventListener("load", () => { elements.portalLoading.hidden = true; });
+  window.addEventListener("focus", updateSessionLabel);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) updateSessionLabel(); });
+  window.addEventListener("storage", event => {
+    if (event.key === SESSION_STARTED_KEY && !event.newValue && state.user) void logout();
   });
 
   try {
@@ -171,25 +402,16 @@ async function init() {
     await registerWorker();
     const values = Object.values(state.config.firebase || {});
     if (!values.length || values.some(value => !value || String(value).startsWith("CONFIGURE_"))) {
-      throw new Error("Administrator nie zakończył jeszcze konfiguracji Firebase.");
+      throw new Error("Administrator nie zakończył jeszcze konfiguracji dostępu.");
     }
     const firebaseApp = initializeApp(state.config.firebase);
     state.auth = getAuth(firebaseApp);
     state.db = getFirestore(firebaseApp);
-    await setPersistence(state.auth, browserSessionPersistence);
-    elements.loginButton.disabled = false;
-    setStatus("Środowisko gotowe. Oczekiwanie na autoryzację.");
+    await setPersistence(state.auth, browserLocalPersistence);
+    onAuthStateChanged(state.auth, user => { void restoreSession(user); });
   } catch (error) {
-    setStatus(error.message || "Nie udało się zainicjalizować repozytorium.", true);
+    setStatus(error.message || "Nie udało się zainicjalizować portalu.", true);
   }
-
-  elements.loginButton.addEventListener("click", login);
-  elements.logoutButton.addEventListener("click", logout);
-  elements.indexButton.addEventListener("click", () => setPortal(state.manifest.main_entry || state.config.mainEntry, elements.indexButton));
-  elements.beechMapButton.addEventListener("click", () => setPortal("mapa_bukow/index.html", elements.beechMapButton));
-  elements.simulatorsButton.addEventListener("click", () => setPortal("program_badawczy_2025_2026/symulatory/index.html", elements.simulatorsButton));
-  elements.combinedReportButton.addEventListener("click", () => setPortal("program_badawczy_2025_2026/SITTAI_program_badawczy_2025-05_2026-09.pdf", elements.combinedReportButton));
-  elements.portalFrame.addEventListener("load", () => { elements.portalLoading.hidden = true; });
 }
 
 window.addEventListener("DOMContentLoaded", init);
