@@ -1067,6 +1067,25 @@ async function initializeHawthornKey(coreModule) {
   });
 }
 
+function combinedProjects(loadedModules) {
+  const projects = loadedModules.flatMap(module => module.manifest.projects);
+  if (!loadedModules.some(module => module.id === "core") || !loadedModules.some(module => module.id === "hawthorn")) {
+    return projects;
+  }
+
+  const forestProject = projects.find(project => project.name === "Mapy lasów");
+  const hawthornProject = projects.find(project => project.name === "Mapa głogu");
+  if (!forestProject || !hawthornProject?.views?.length) return projects;
+
+  forestProject.views = [
+    ...forestProject.views,
+    ...hawthornProject.views.map(view => ({ ...view, label: "Głóg" }))
+  ];
+  forestProject.summary = "Buk, grab, dąb, świerk i głóg oraz lekkie porównanie ich współwystępowania.";
+  forestProject.meta = ["5 grup gatunków", "Dane BDL 2025", "LASY MIX"];
+  return projects.filter(project => project !== hawthornProject);
+}
+
 async function unlock(user) {
   if (state.unlocking || state.user) return;
   state.unlocking = true;
@@ -1098,7 +1117,7 @@ async function unlock(user) {
     }
     if (!loadedModules.length) throw accessFailure("To konto nie ma udostępnionych modułów.");
     const manifest = {
-      projects: loadedModules.flatMap(module => module.manifest.projects),
+      projects: combinedProjects(loadedModules),
       files: loadedModules.flatMap(module => module.manifest.files)
     };
 
