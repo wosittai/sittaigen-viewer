@@ -1082,7 +1082,7 @@ function combinedProjects(loadedModules) {
     ...hawthornProject.views.map(view => ({ ...view, label: "Głóg" }))
   ];
   forestProject.summary = "Buk, grab, dąb, świerk i głóg oraz lekkie porównanie ich współwystępowania.";
-  forestProject.meta = ["5 grup gatunków", "Dane BDL 2025", "LASY MIX"];
+  forestProject.meta = ["5 grup gatunków", "Dane BDL 2025–2026", "LASY MIX"];
   return projects.filter(project => project !== hawthornProject);
 }
 
