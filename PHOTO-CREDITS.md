@@ -1,21 +1,13 @@
 # Źródła fotografii
 
-## Widok desktopowy
+## Widoki desktopowy i mobilny
 
-- Utwór: „Droga Stu Zakrętów w Dolinie Pięciu Jezior”
-- Autor: Arkadiusz Czarnecki
-- Źródło: https://www.polczyn-zdroj.pl/page/o-szwajcarii-polczynskiej
-- Plik źródłowy: https://www.polczyn-zdroj.pl/sites/default/files/galerie/2023-02/dji_export_1667751089073.jpg
-- Zmiany: zmniejszenie, kompresja WebP i delikatny grading wykonywany przez CSS.
+- Utwór: fotografia Jeziora Krzywego w rezerwacie Dolina Pięciu Jezior
+- Autor: Ana McGurran
+- Źródło: https://www.dzikiezdroje.pl/rezerwatpieciujezior.html
+- Plik źródłowy: https://www.dzikiezdroje.pl/uploads/1/3/9/2/139245630/img-7133-2_orig.jpg
+- Zmiany: osobne kadry, powiększenie, kompresja WebP i delikatny grading kolorystyczny.
 
-## Widok mobilny
-
-- Utwór: „Droga Stu Zakrętów w Dolinie Pięciu Jezior”
-- Autor: Arkadiusz Czarnecki
-- Źródło: https://www.polczyn-zdroj.pl/page/o-szwajcarii-polczynskiej
-- Plik źródłowy: https://www.polczyn-zdroj.pl/sites/default/files/galerie/2023-02/dji_export_1667751089073.jpg
-- Zmiany: kadr, zmniejszenie, kompresja WebP i delikatny grading wykonywany przez CSS.
-
-Obie fotografie pochodzą z publicznej galerii Urzędu Miejskiego w Połczynie-Zdroju.
-Galeria podaje autorów, ale nie publikuje odrębnej otwartej licencji. Przed użyciem
-portalu poza prywatną strefą należy potwierdzić prawo dalszej publikacji fotografii.
+Strona źródłowa identyfikuje miejsce i autora, ale nie publikuje otwartej licencji.
+Przed użyciem portalu poza prywatną strefą należy potwierdzić prawo dalszej
+publikacji fotografii.
