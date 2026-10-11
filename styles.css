@@ -132,6 +132,223 @@ h1, h2 { margin: 0; font-weight: 560; letter-spacing: -.035em; }
 .technical-status { min-height: 34px; margin: 20px 0 0; color: var(--faint); font: 10px/1.55 var(--mono); }
 .technical-status.error { color: var(--danger); }
 
+/* Immersive login — the dashboard below keeps the original technical system. */
+body.login-mode { overflow-x: hidden; background: #07100e; }
+body.login-mode .masthead {
+  position: fixed;
+  z-index: 30;
+  top: 0;
+  left: 50%;
+  width: min(1480px, calc(100% - 64px));
+  min-height: 92px;
+  transform: translateX(-50%);
+  border: 0;
+  color: #fff;
+  text-shadow: 0 2px 18px rgba(0,0,0,.55);
+}
+body.login-mode .brand-mark { border-color: rgba(255,255,255,.38); background: rgba(8,15,14,.22); backdrop-filter: blur(10px); }
+body.login-mode .brand-mark i { border-color: rgba(255,255,255,.52); }
+body.login-mode .brand-mark i:first-child { border-color: #dfad58; background: #dfad58; }
+body.login-mode .brand-mark i:last-child { border-color: #dfad58; }
+body.login-mode .eyebrow { color: #e6bd72; }
+body.login-mode .security-state { display: none; }
+body.login-mode main { width: 100%; margin: 0; }
+body.login-mode footer { display: none; }
+
+body.login-mode .access-panel {
+  position: relative;
+  isolation: isolate;
+  min-height: 100svh;
+  display: block;
+  overflow: hidden;
+  padding: 0;
+}
+.login-wallpapers, .login-wallpaper, .login-shade { position: absolute; inset: 0; }
+.login-wallpapers { z-index: -3; overflow: hidden; background: #0b1411; }
+.login-wallpaper {
+  opacity: 0;
+  background-position: center;
+  background-size: cover;
+  transform: scale(1.025);
+  transition: opacity .9s ease, transform 7s ease;
+}
+.login-wallpaper[data-scene="lakes"] { background-image: url("assets/polczyn-five-lakes.webp"); background-position: 48% center; }
+.login-wallpaper[data-scene="park"] { background-image: url("assets/polczyn-park-reservoir.webp"); background-position: center; }
+.login-wallpaper[data-scene="stream"] { background-image: url("assets/polczyn-forest-stream.webp"); background-position: center; }
+body[data-login-scene="lakes"] .login-wallpaper[data-scene="lakes"],
+body[data-login-scene="park"] .login-wallpaper[data-scene="park"],
+body[data-login-scene="stream"] .login-wallpaper[data-scene="stream"] { opacity: 1; transform: scale(1); }
+.login-shade {
+  z-index: -2;
+  background:
+    linear-gradient(180deg, rgba(5,10,9,.38) 0%, rgba(5,10,9,.02) 34%, rgba(5,10,9,.14) 70%, rgba(5,10,9,.52) 100%),
+    radial-gradient(circle at var(--pool-x, 68%) var(--pool-y, 64%), rgba(6,17,18,.02) 0 13%, rgba(3,9,9,.18) 34%, rgba(3,8,8,.28) 100%);
+  pointer-events: none;
+}
+body[data-login-scene="lakes"] { --pool-x: 69%; --pool-y: 65%; }
+body[data-login-scene="park"] { --pool-x: 50%; --pool-y: 62%; }
+body[data-login-scene="stream"] { --pool-x: 36%; --pool-y: 58%; }
+
+.login-pool-shell {
+  position: absolute;
+  z-index: 4;
+  left: var(--pool-x);
+  top: var(--pool-y);
+  width: min(620px, calc(100% - 56px));
+  transform: translate(-50%, -50%);
+  transition: left .9s cubic-bezier(.2,.75,.25,1), top .9s cubic-bezier(.2,.75,.25,1);
+}
+.login-pool {
+  position: relative;
+  min-height: 348px;
+  display: grid;
+  place-items: center;
+  padding: 52px 66px 46px;
+  color: #f7f3e9;
+  border: 1px solid rgba(225,236,226,.23);
+  border-radius: 49% 51% 46% 54% / 55% 46% 54% 45%;
+  background:
+    radial-gradient(ellipse at 50% 44%, rgba(23,42,40,.76), rgba(5,18,20,.86) 63%, rgba(2,12,14,.93) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.18),
+    inset 0 -28px 70px rgba(0,0,0,.26),
+    0 26px 75px rgba(0,0,0,.34);
+  backdrop-filter: blur(17px) saturate(.78);
+}
+.login-pool::before, .login-pool::after, .pool-ripple {
+  content: "";
+  position: absolute;
+  inset: -14px -24px;
+  border: 1px solid rgba(224,235,222,.17);
+  border-radius: 52% 48% 55% 45% / 47% 55% 45% 53%;
+  pointer-events: none;
+}
+.login-pool::after { inset: -30px -49px; opacity: .52; transform: rotate(-1.2deg); }
+.pool-ripple { inset: 13px 19px; opacity: .24; transform: rotate(1deg); }
+.login-content { position: relative; z-index: 2; width: 100%; min-width: 0; text-align: center; }
+.login-place { margin: 0 0 9px; color: #e5bd75; font: 650 9px/1.3 var(--mono); letter-spacing: .17em; text-transform: uppercase; }
+.login-content h1 { font-size: clamp(40px, 4.2vw, 60px); line-height: .92; text-shadow: 0 3px 24px rgba(0,0,0,.34); }
+.login-content .auth-text { margin: 12px 0 24px; color: rgba(241,241,235,.7); font-size: 13px; }
+.pond-login-button {
+  width: min(380px, 100%);
+  min-height: 52px;
+  margin: 0 auto;
+  padding: 0 18px;
+  display: grid;
+  grid-template-columns: 24px 1fr 24px;
+  align-items: center;
+  gap: 12px;
+  color: #13201d;
+  border: 1px solid rgba(255,255,255,.66);
+  border-radius: 48% 52% 45% 55% / 58% 44% 56% 42%;
+  background: rgba(249,247,238,.92);
+  box-shadow: 0 9px 32px rgba(0,0,0,.22), inset 0 -1px 0 rgba(0,0,0,.08);
+  font-weight: 720;
+  transition: transform .2s ease, background .2s ease;
+}
+.pond-login-button:not(:disabled):hover { transform: translateY(-2px); background: #fff; }
+.login-content .technical-status { min-height: 16px; margin: 15px auto 0; color: rgba(231,235,229,.54); font-size: 9px; }
+.login-content .technical-status.error { color: #f0a399; }
+
+.device-challenge { width: 100%; min-width: 0; margin: 0 auto; text-align: left; }
+.challenge-head { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 14px; text-align: left; }
+.challenge-head > div { display: grid; gap: 3px; }
+.challenge-head strong { font-size: 13px; }
+.challenge-head small { color: rgba(237,240,233,.61); font: 9px/1.3 var(--mono); }
+.challenge-leaf { width: 29px; height: 29px; display: grid; place-items: center; color: #e6bd72; border: 1px solid rgba(230,189,114,.4); border-radius: 50%; font-size: 20px; }
+.word-bank { min-height: 37px; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; }
+.word-chip {
+  min-height: 29px;
+  padding: 0 10px;
+  color: #f3ead8;
+  border: 1px solid rgba(225,184,105,.34);
+  border-radius: 46% 54% 48% 52% / 58% 45% 55% 42%;
+  background: rgba(112,73,28,.36);
+  font: 620 10px/1 var(--mono);
+  white-space: nowrap;
+  touch-action: manipulation;
+  cursor: grab;
+}
+.word-chip:active { cursor: grabbing; }
+.word-chip.dragging { opacity: .42; }
+.sentence-river {
+  position: relative;
+  min-height: 52px;
+  margin-top: 11px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 8px 3px 10px;
+  scrollbar-width: none;
+}
+.sentence-river::-webkit-scrollbar { display: none; }
+.sentence-river::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3px;
+  height: 18px;
+  border-bottom: 1px solid rgba(177,216,209,.48);
+  border-radius: 50%;
+  background: linear-gradient(90deg, transparent, rgba(90,154,151,.13), transparent);
+  pointer-events: none;
+}
+.river-slot {
+  position: relative;
+  z-index: 1;
+  min-width: 56px;
+  height: 34px;
+  flex: 1 0 auto;
+  display: grid;
+  place-items: center;
+  border-bottom: 1px dashed rgba(213,229,224,.32);
+}
+.river-slot:nth-child(1), .river-slot:nth-child(2), .river-slot:nth-child(6) { min-width: 82px; }
+.river-slot .word-chip { color: #e9f1ec; border-color: rgba(167,211,207,.28); background: rgba(33,82,82,.34); }
+.river-slot.drop-active { background: rgba(116,185,175,.13); }
+.challenge-status { min-height: 14px; margin: 9px 0 0; color: rgba(233,238,232,.48); font: 8px/1.45 var(--mono); text-align: center; }
+.device-challenge.wrong { animation: challenge-shake .32s ease; }
+.device-challenge.wrong .challenge-status { color: #f0a399; }
+.device-challenge.solved { animation: challenge-dissolve .7s ease forwards; }
+@keyframes challenge-shake { 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+@keyframes challenge-dissolve { to { opacity: 0; transform: translateY(-8px); } }
+
+.scene-picker {
+  position: absolute;
+  z-index: 12;
+  right: 34px;
+  bottom: 27px;
+  display: flex;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 999px;
+  background: rgba(5,12,11,.35);
+  backdrop-filter: blur(12px);
+}
+.scene-picker button {
+  position: relative;
+  width: 58px;
+  height: 38px;
+  overflow: hidden;
+  padding: 0;
+  color: #fff;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background-position: center;
+  background-size: cover;
+  filter: saturate(.72) brightness(.72);
+  transition: width .25s ease, filter .25s ease, border-color .25s ease;
+}
+.scene-picker button::before { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.24); }
+.scene-picker button:nth-child(1) { background-image: url("assets/polczyn-five-lakes.webp"); }
+.scene-picker button:nth-child(2) { background-image: url("assets/polczyn-park-reservoir.webp"); }
+.scene-picker button:nth-child(3) { background-image: url("assets/polczyn-forest-stream.webp"); }
+.scene-picker button span { position: relative; z-index: 1; font: 700 9px/1 var(--mono); }
+.scene-picker button[aria-pressed="true"] { width: 82px; border-color: rgba(255,255,255,.7); filter: saturate(.95) brightness(1); }
+
 .dashboard-panel { min-height: calc(100vh - 188px); padding: 62px 0 80px; }
 .dashboard-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 40px; margin-bottom: 38px; }
 .dashboard-head h1 { font-size: clamp(38px, 5vw, 64px); line-height: 1; }
@@ -277,6 +494,8 @@ footer { width: min(1360px, calc(100% - 72px)); min-height: 78px; margin: 0 auto
   .back-button { min-height: 46px; }
   .portal-nav { width: 100%; order: 4; margin-left: 0; padding-top: 9px; border-top: 1px solid var(--line); }
   .lock-button { margin-left: auto; }
+  body.login-mode .masthead { width: calc(100% - 40px); }
+  .login-pool-shell { width: min(590px, calc(100% - 44px)); }
 }
 
 @media (max-width: 560px) {
@@ -310,8 +529,32 @@ footer { width: min(1360px, calc(100% - 72px)); min-height: 78px; margin: 0 auto
   .access-user { grid-template-columns: 1fr; }
   .access-user-actions { grid-column: 1; }
   footer { flex-direction: column; }
+  body.login-mode .masthead { width: calc(100% - 28px); min-height: 76px; }
+  body.login-mode .brand-name { font-size: 14px; }
+  body.login-mode .brand-mark { width: 34px; height: 34px; }
+  body.login-mode .access-panel { min-height: max(100svh, 700px); }
+  body[data-login-scene="lakes"], body[data-login-scene="park"], body[data-login-scene="stream"] { --pool-x: 50%; --pool-y: 54%; }
+  .login-wallpaper[data-scene="lakes"] { background-position: 38% center; }
+  .login-wallpaper[data-scene="park"] { background-position: 49% center; }
+  .login-wallpaper[data-scene="stream"] { background-position: 43% center; }
+  .login-pool-shell { width: calc(100% - 30px); }
+  .login-pool { min-height: 380px; padding: 44px 24px 38px; border-radius: 44% 56% 47% 53% / 51% 45% 55% 49%; }
+  .login-pool::before { inset: -10px -8px; }
+  .login-pool::after { inset: -22px -14px; }
+  .login-content h1 { font-size: 43px; }
+  .login-content .auth-text { margin-bottom: 20px; }
+  .scene-picker { right: 50%; bottom: 18px; transform: translateX(50%); }
+  .scene-picker button { width: 45px; height: 34px; }
+  .scene-picker button[aria-pressed="true"] { width: 66px; }
+  .word-bank { max-height: 74px; overflow-y: auto; }
+  .sentence-river { margin-inline: -5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

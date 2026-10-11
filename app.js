@@ -27,9 +27,25 @@ import {
 const MANIFEST_AAD = "sittaigen-manifest-v1";
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 const SESSION_STARTED_KEY = "private-portal-session-started-v1";
+const DEVICE_TRUST_KEY = "private-portal-device-trust-v1";
+const DEVICE_TRUST_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+const LOGIN_SCENE_KEY = "private-portal-login-scene-v1";
 const ADMIN_EMAIL = "coinguard2024@gmail.com";
 const ACCESS_COLLECTION = "accessUsers";
 const LEGACY_EMAILS = new Set(["wosittai@gmail.com", "79elem@gmail.com"]);
+const LOGIN_SCENES = {
+  lakes: { name: "Dolina Pięciu Jezior", asset: "assets/polczyn-five-lakes.webp" },
+  park: { name: "Zalew / Park Zdrojowy", asset: "assets/polczyn-park-reservoir.webp" },
+  stream: { name: "Leśny potok", asset: "assets/polczyn-forest-stream.webp" }
+};
+const CHALLENGE_WORDS = [
+  { id: "word-0", text: "Uroczyście" },
+  { id: "word-1", text: "przysięgam," },
+  { id: "word-2", text: "że" },
+  { id: "word-3", text: "knuję" },
+  { id: "word-4", text: "coś" },
+  { id: "word-5", text: "niedobrego" }
+];
 const state = {
   accessExpiryTimer: null,
   accessRecord: null,
@@ -41,13 +57,20 @@ const state = {
   config: null,
   currentProject: null,
   db: null,
+  deviceFingerprint: "",
+  deviceTrusted: false,
+  draggedWordId: null,
   editingEmail: null,
   expiryTimer: null,
+  firebaseReady: false,
   manifest: null,
+  pendingUser: null,
   sessionStartedAt: 0,
   suppressReadyOnce: false,
   unlocking: false,
-  user: null
+  user: null,
+  wordBank: [],
+  wordSlots: Array(CHALLENGE_WORDS.length).fill(null)
 };
 const elements = {};
 
@@ -58,6 +81,227 @@ function isAdminUser(user = state.user) { return normalizedEmail(user?.email) ==
 function setStatus(message, error = false) {
   elements.technicalStatus.textContent = message;
   elements.technicalStatus.classList.toggle("error", error);
+}
+
+function updateLoginAvailability() {
+  if (!elements.loginButton) return;
+  elements.loginButton.disabled = !(state.firebaseReady && state.deviceTrusted && !state.unlocking);
+}
+
+function setLoginScene(scene) {
+  if (!LOGIN_SCENES[scene]) return;
+  document.body.dataset.loginScene = scene;
+  if (elements.loginSceneName) elements.loginSceneName.textContent = LOGIN_SCENES[scene].name;
+  for (const button of document.querySelectorAll("[data-scene-choice]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.sceneChoice === scene));
+  }
+  try { localStorage.setItem(LOGIN_SCENE_KEY, scene); }
+  catch (_) { /* The visual choice can remain tab-local. */ }
+}
+
+function initializeScenePicker() {
+  let initialScene = "lakes";
+  try {
+    const savedScene = localStorage.getItem(LOGIN_SCENE_KEY);
+    if (savedScene && LOGIN_SCENES[savedScene]) initialScene = savedScene;
+  } catch (_) { /* Keep the default scene. */ }
+  setLoginScene(initialScene);
+
+  const preloaded = new Set(["lakes"]);
+  const preload = scene => {
+    if (preloaded.has(scene) || !LOGIN_SCENES[scene]) return;
+    const image = new Image();
+    image.src = LOGIN_SCENES[scene].asset;
+    preloaded.add(scene);
+  };
+  for (const button of document.querySelectorAll("[data-scene-choice]")) {
+    const scene = button.dataset.sceneChoice;
+    button.addEventListener("pointerenter", () => preload(scene), { once: true });
+    button.addEventListener("focus", () => preload(scene), { once: true });
+    button.addEventListener("click", () => {
+      preload(scene);
+      setLoginScene(scene);
+    });
+  }
+}
+
+async function browserFingerprint() {
+  const screenLong = Math.max(screen.width || 0, screen.height || 0);
+  const screenShort = Math.min(screen.width || 0, screen.height || 0);
+  const profile = [
+    navigator.userAgentData?.platform || navigator.platform || "",
+    (navigator.userAgentData?.brands || []).map(item => item.brand).sort().join(","),
+    navigator.language || "",
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+    navigator.maxTouchPoints || 0,
+    screenLong,
+    screenShort,
+    screen.colorDepth || 0
+  ].join("|");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(profile));
+  return Array.from(new Uint8Array(digest)).slice(0, 16).map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function shuffledChallengeWords() {
+  const words = CHALLENGE_WORDS.map(word => word.id);
+  for (let index = words.length - 1; index > 0; index -= 1) {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    const other = random[0] % (index + 1);
+    [words[index], words[other]] = [words[other], words[index]];
+  }
+  if (words.every((word, index) => word === CHALLENGE_WORDS[index].id)) words.push(words.shift());
+  return words;
+}
+
+function challengeWord(wordId) {
+  return CHALLENGE_WORDS.find(word => word.id === wordId);
+}
+
+function createWordChip(wordId, location) {
+  const word = challengeWord(wordId);
+  const chip = createElement("button", "word-chip", word.text);
+  chip.type = "button";
+  chip.draggable = true;
+  chip.dataset.wordId = wordId;
+  chip.setAttribute("aria-label", location === "bank" ? `Dodaj słowo: ${word.text}` : `Cofnij słowo: ${word.text}`);
+  chip.addEventListener("dragstart", event => {
+    state.draggedWordId = wordId;
+    chip.classList.add("dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", wordId);
+  });
+  chip.addEventListener("dragend", () => {
+    state.draggedWordId = null;
+    chip.classList.remove("dragging");
+  });
+  chip.addEventListener("click", () => {
+    if (location === "bank") {
+      const empty = state.wordSlots.indexOf(null);
+      if (empty >= 0) moveWordToSlot(wordId, empty);
+    } else {
+      returnWordToBank(wordId);
+    }
+  });
+  return chip;
+}
+
+function moveWordToSlot(wordId, targetIndex) {
+  const sourceIndex = state.wordSlots.indexOf(wordId);
+  const bankIndex = state.wordBank.indexOf(wordId);
+  if (sourceIndex >= 0) state.wordSlots[sourceIndex] = null;
+  if (bankIndex >= 0) state.wordBank.splice(bankIndex, 1);
+
+  const displaced = state.wordSlots[targetIndex];
+  if (displaced && displaced !== wordId) {
+    if (sourceIndex >= 0) state.wordSlots[sourceIndex] = displaced;
+    else state.wordBank.push(displaced);
+  }
+  state.wordSlots[targetIndex] = wordId;
+  renderDeviceChallenge();
+  checkDeviceChallenge();
+}
+
+function returnWordToBank(wordId) {
+  const sourceIndex = state.wordSlots.indexOf(wordId);
+  if (sourceIndex >= 0) state.wordSlots[sourceIndex] = null;
+  if (!state.wordBank.includes(wordId)) state.wordBank.push(wordId);
+  renderDeviceChallenge();
+}
+
+function renderDeviceChallenge() {
+  elements.wordBank.replaceChildren(...state.wordBank.map(wordId => createWordChip(wordId, "bank")));
+  elements.sentenceRiver.replaceChildren();
+  state.wordSlots.forEach((wordId, index) => {
+    const slot = createElement("div", "river-slot");
+    slot.dataset.slotIndex = String(index);
+    slot.addEventListener("dragover", event => {
+      event.preventDefault();
+      slot.classList.add("drop-active");
+      event.dataTransfer.dropEffect = "move";
+    });
+    slot.addEventListener("dragleave", () => slot.classList.remove("drop-active"));
+    slot.addEventListener("drop", event => {
+      event.preventDefault();
+      slot.classList.remove("drop-active");
+      const dragged = event.dataTransfer.getData("text/plain") || state.draggedWordId;
+      if (challengeWord(dragged)) moveWordToSlot(dragged, index);
+    });
+    if (wordId) slot.append(createWordChip(wordId, "river"));
+    elements.sentenceRiver.append(slot);
+  });
+}
+
+function checkDeviceChallenge() {
+  if (state.wordSlots.includes(null)) return;
+  const correct = state.wordSlots.every((wordId, index) => wordId === CHALLENGE_WORDS[index].id);
+  if (correct) {
+    void trustCurrentDevice();
+    return;
+  }
+  elements.challengeStatus.textContent = "Nurt jeszcze się nie układa — przesuń słowa.";
+  elements.deviceChallenge.classList.remove("wrong");
+  void elements.deviceChallenge.offsetWidth;
+  elements.deviceChallenge.classList.add("wrong");
+}
+
+async function trustCurrentDevice() {
+  if (state.deviceTrusted) return;
+  state.deviceTrusted = true;
+  try {
+    localStorage.setItem(DEVICE_TRUST_KEY, JSON.stringify({
+      fingerprint: state.deviceFingerprint,
+      expiresAt: Date.now() + DEVICE_TRUST_TTL_MS
+    }));
+  } catch (_) { /* Trust remains valid for the current tab. */ }
+
+  elements.challengeStatus.textContent = "Nurt otwarty.";
+  elements.deviceChallenge.classList.remove("wrong");
+  elements.deviceChallenge.classList.add("solved");
+  setTimeout(() => {
+    elements.deviceChallenge.hidden = true;
+    elements.loginButton.hidden = false;
+    updateLoginAvailability();
+    setStatus(state.firebaseReady ? "Możesz kontynuować." : "Inicjalizacja…");
+  }, 650);
+
+  if (state.pendingUser) {
+    const pendingUser = state.pendingUser;
+    state.pendingUser = null;
+    await restoreSession(pendingUser);
+  }
+}
+
+async function initializeDeviceTrust() {
+  state.deviceFingerprint = await browserFingerprint();
+  let trusted = false;
+  try {
+    const saved = JSON.parse(localStorage.getItem(DEVICE_TRUST_KEY) || "null");
+    trusted = saved?.fingerprint === state.deviceFingerprint && Number(saved.expiresAt) > Date.now();
+    if (!trusted) localStorage.removeItem(DEVICE_TRUST_KEY);
+  } catch (_) { trusted = false; }
+
+  state.deviceTrusted = trusted;
+  if (trusted) {
+    elements.deviceChallenge.hidden = true;
+    elements.loginButton.hidden = false;
+  } else {
+    state.wordBank = shuffledChallengeWords();
+    state.wordSlots = Array(CHALLENGE_WORDS.length).fill(null);
+    elements.deviceChallenge.hidden = false;
+    elements.loginButton.hidden = true;
+    elements.wordBank.addEventListener("dragover", event => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    });
+    elements.wordBank.addEventListener("drop", event => {
+      event.preventDefault();
+      const dragged = event.dataTransfer.getData("text/plain") || state.draggedWordId;
+      if (challengeWord(dragged)) returnWordToBank(dragged);
+    });
+    renderDeviceChallenge();
+  }
+  updateLoginAvailability();
 }
 
 function base64urlToBytes(value) {
@@ -259,6 +503,7 @@ function renderProjects() {
 
 function showDashboard() {
   state.currentProject = null;
+  document.body.classList.remove("login-mode");
   elements.portalFrame.src = "about:blank";
   elements.projectPanel.hidden = true;
   elements.adminPanel.hidden = true;
@@ -278,6 +523,7 @@ function setPortal(view, button) {
 function openProject(project) {
   if (!Array.isArray(project.views) || !project.views.length) return;
   state.currentProject = project;
+  document.body.classList.remove("login-mode");
   elements.dashboardPanel.hidden = true;
   elements.adminPanel.hidden = true;
   elements.projectPanel.hidden = false;
@@ -585,6 +831,7 @@ function startAdminUsersListener() {
 
 function showAdminPanel() {
   if (!isAdminUser()) return;
+  document.body.classList.remove("login-mode");
   elements.portalFrame.src = "about:blank";
   elements.projectPanel.hidden = true;
   elements.dashboardPanel.hidden = true;
@@ -755,11 +1002,17 @@ async function unlock(user) {
     void bootstrapLegacyUsers();
   } finally {
     state.unlocking = false;
+    updateLoginAvailability();
   }
 }
 
 async function login() {
+  if (!state.deviceTrusted) {
+    setStatus("Najpierw ułóż zdanie w nurcie.", true);
+    return;
+  }
   try {
+    elements.loginButton.disabled = true;
     setStatus("Otwieranie bezpiecznego okna logowania Google…");
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: "select_account" });
@@ -773,6 +1026,8 @@ async function login() {
       state.suppressReadyOnce = true;
       await signOut(state.auth).catch(() => {});
     }
+  } finally {
+    updateLoginAvailability();
   }
 }
 
@@ -794,6 +1049,7 @@ async function logout(message = "Sesja została bezpiecznie zamknięta.") {
   state.adminUsers = [];
   state.authTime = 0;
   state.manifest = null;
+  state.pendingUser = null;
   state.user = null;
   state.currentProject = null;
   elements.portalFrame.src = "about:blank";
@@ -801,10 +1057,12 @@ async function logout(message = "Sesja została bezpiecznie zamknięta.") {
   elements.adminPanel.hidden = true;
   elements.dashboardPanel.hidden = true;
   elements.accessPanel.hidden = false;
+  document.body.classList.add("login-mode");
   elements.securityState.dataset.state = "locked";
   elements.securityLabel.textContent = "Dostęp zablokowany";
   document.title = "Portal prywatny — dostęp";
   setStatus(message);
+  updateLoginAvailability();
   if (state.auth?.currentUser) {
     state.suppressReadyOnce = true;
     await signOut(state.auth).catch(() => {});
@@ -813,7 +1071,8 @@ async function logout(message = "Sesja została bezpiecznie zamknięta.") {
 
 async function restoreSession(user) {
   if (!user) {
-    elements.loginButton.disabled = false;
+    state.pendingUser = null;
+    updateLoginAvailability();
     if (state.suppressReadyOnce) {
       state.suppressReadyOnce = false;
       return;
@@ -822,7 +1081,13 @@ async function restoreSession(user) {
       await logout("Sesja autoryzacyjna została zakończona. Zaloguj się ponownie.");
       return;
     }
-    if (!state.user) setStatus("Środowisko gotowe. Oczekiwanie na autoryzację.");
+    if (!state.user) setStatus(state.deviceTrusted ? "Możesz kontynuować." : "Nowe urządzenie.");
+    return;
+  }
+
+  if (!state.deviceTrusted) {
+    state.pendingUser = user;
+    setStatus("Potwierdź nowe urządzenie, układając zdanie.");
     return;
   }
 
@@ -865,7 +1130,10 @@ async function init() {
     dashboardIdentity: $("dashboardIdentity"),
     dashboardLogoutButton: $("dashboardLogoutButton"),
     dashboardPanel: $("dashboardPanel"),
+    challengeStatus: $("challengeStatus"),
+    deviceChallenge: $("deviceChallenge"),
     loginButton: $("loginButton"),
+    loginSceneName: $("loginSceneName"),
     logoutButton: $("logoutButton"),
     portalFrame: $("portalFrame"),
     portalLoading: $("portalLoading"),
@@ -877,7 +1145,9 @@ async function init() {
     securityLabel: $("securityLabel"),
     securityState: $("securityState"),
     technicalStatus: $("technicalStatus"),
-    userAvatar: $("userAvatar")
+    userAvatar: $("userAvatar"),
+    sentenceRiver: $("sentenceRiver"),
+    wordBank: $("wordBank")
   });
 
   elements.loginButton.addEventListener("click", login);
@@ -897,6 +1167,8 @@ async function init() {
   });
 
   try {
+    initializeScenePicker();
+    await initializeDeviceTrust();
     resetAdminForm();
     state.config = await fetchJson("config.json");
     await registerWorker();
@@ -908,8 +1180,12 @@ async function init() {
     state.auth = getAuth(firebaseApp);
     state.db = getFirestore(firebaseApp);
     await setPersistence(state.auth, browserLocalPersistence);
+    state.firebaseReady = true;
+    updateLoginAvailability();
     onAuthStateChanged(state.auth, user => { void restoreSession(user); });
   } catch (error) {
+    state.firebaseReady = false;
+    updateLoginAvailability();
     setStatus(error.message || "Nie udało się zainicjalizować portalu.", true);
   }
 }
