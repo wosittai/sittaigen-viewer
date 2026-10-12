@@ -2,10 +2,18 @@ name: Finish custom-domain HTTPS
 
 on:
   workflow_dispatch:
+  schedule:
+    # GitHub can need up to 24 hours to issue a Pages certificate.
+    - cron: "*/30 * * * *"
 
 permissions:
+  actions: write
   contents: read
   pages: write
+
+concurrency:
+  group: finish-custom-domain-https
+  cancel-in-progress: false
 
 jobs:
   enable-https:
@@ -17,18 +25,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          for attempt in $(seq 1 240); do
+          disable_finisher() {
+            gh api \
+              -X PUT \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/finish-custom-domain-https.yml/disable" \
+              || true
+          }
+
+          # A manual run watches continuously. Scheduled runs make one quick
+          # attempt every 30 minutes so provisioning survives runner timeouts.
+          attempts=1
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            attempts=240
+          fi
+
+          for attempt in $(seq 1 "${attempts}"); do
             enforced=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '.https_enforced // false')
             if [[ "$enforced" == "true" ]]; then
               echo "HTTPS is already enforced."
+              disable_finisher
               exit 0
             fi
             if gh api -X PUT "repos/${GITHUB_REPOSITORY}/pages" -F https_enforced=true; then
               echo "HTTPS enabled on attempt ${attempt}."
+              disable_finisher
               exit 0
             fi
-            echo "Certificate not ready on attempt ${attempt}; retrying in 60 seconds."
-            sleep 60
+            if [[ "${attempt}" -lt "${attempts}" ]]; then
+              echo "Certificate not ready on attempt ${attempt}; retrying in 60 seconds."
+              sleep 60
+            fi
           done
-          echo "Certificate was not ready within four hours." >&2
-          exit 1
+          echo "Certificate is not ready yet; a scheduled run will retry." >&2
