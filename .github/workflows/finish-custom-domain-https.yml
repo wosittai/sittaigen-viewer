@@ -1,0 +1,34 @@
+name: Finish custom-domain HTTPS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+
+jobs:
+  enable-https:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Wait for the certificate and enforce HTTPS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          for attempt in $(seq 1 240); do
+            enforced=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '.https_enforced // false')
+            if [[ "$enforced" == "true" ]]; then
+              echo "HTTPS is already enforced."
+              exit 0
+            fi
+            if gh api -X PUT "repos/${GITHUB_REPOSITORY}/pages" -F https_enforced=true; then
+              echo "HTTPS enabled on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Certificate not ready on attempt ${attempt}; retrying in 60 seconds."
+            sleep 60
+          done
+          echo "Certificate was not ready within four hours." >&2
+          exit 1
