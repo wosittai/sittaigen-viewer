@@ -1046,27 +1046,6 @@ async function readVaultModule(moduleId) {
   return { id: moduleId, key: rawKey, manifest };
 }
 
-async function initializeHawthornKey(coreModule) {
-  const definition = moduleDefinitions().hawthorn;
-  if (!definition) return;
-  const reference = doc(state.db, definition.keyDocumentPath);
-  const current = await getDoc(reference);
-  if (current.exists()) return;
-  const key = await deriveModuleKey(coreModule.key, "hawthorn");
-  if (await bytesKeyId(key) !== definition.expectedKeyId) {
-    throw new Error("Nie można zainicjalizować klucza mapy głogu.");
-  }
-  await setDoc(reference, {
-    key: bytesToBase64url(key),
-    key_id: definition.expectedKeyId,
-    module: "hawthorn",
-    createdAt: serverTimestamp(),
-    createdBy: ADMIN_EMAIL,
-    updatedAt: serverTimestamp(),
-    updatedBy: ADMIN_EMAIL
-  });
-}
-
 function combinedProjects(loadedModules) {
   return loadedModules.flatMap(module => module.manifest.projects);
 }
@@ -1239,8 +1218,6 @@ async function init() {
     accessForm: $("accessForm"),
     accessFormTitle: $("accessFormTitle"),
     accessMaxLogins: $("accessMaxLogins"),
-    accessModuleCore: $("accessModuleCore"),
-    accessModuleHawthorn: $("accessModuleHawthorn"),
     accessStartsAt: $("accessStartsAt"),
     accessSubmitButton: $("accessSubmitButton"),
     accessUserList: $("accessUserList"),
