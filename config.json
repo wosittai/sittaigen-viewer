@@ -8,17 +8,53 @@
   },
   "keyDocumentPath": "vaults/sittaigen",
   "modules": {
+    "beech": {
+      "expectedKeyId": "3bf6c09c1181c614d0d714a3",
+      "keyDocumentPath": "vaultModules/beech",
+      "manifestAad": "sittaigen-module-manifest-v1\u0000beech",
+      "manifestPath": "vault-modules/beech/manifest.bin"
+    },
     "core": {
       "expectedKeyId": "cc54d222c9f477b644381a41",
       "keyDocumentPath": "vaults/sittaigen",
       "manifestAad": "sittaigen-manifest-v1",
       "manifestPath": "vault/manifest.bin"
     },
+    "forest_data": {
+      "expectedKeyId": "d7f843346cdb89baa6c5e613",
+      "keyDocumentPath": "vaultModules/forest_data",
+      "manifestAad": "sittaigen-module-manifest-v1\u0000forest_data",
+      "manifestPath": "vault-modules/forest_data/manifest.bin"
+    },
+    "forest_mix": {
+      "expectedKeyId": "a94f40f5751f7cc50078f674",
+      "keyDocumentPath": "vaultModules/forest_mix",
+      "manifestAad": "sittaigen-module-manifest-v1\u0000forest_mix",
+      "manifestPath": "vault-modules/forest_mix/manifest.bin"
+    },
     "hawthorn": {
       "expectedKeyId": "e88c66c5073fc1cb69d66ceb",
       "keyDocumentPath": "vaultModules/hawthorn",
       "manifestAad": "sittaigen-module-manifest-v1\u0000hawthorn",
       "manifestPath": "vault-modules/hawthorn/manifest.bin"
+    },
+    "hornbeam": {
+      "expectedKeyId": "baa31a45b1997750e14327dd",
+      "keyDocumentPath": "vaultModules/hornbeam",
+      "manifestAad": "sittaigen-module-manifest-v1\u0000hornbeam",
+      "manifestPath": "vault-modules/hornbeam/manifest.bin"
+    },
+    "oak": {
+      "expectedKeyId": "a04643b061243804e77da9dc",
+      "keyDocumentPath": "vaultModules/oak",
+      "manifestAad": "sittaigen-module-manifest-v1\u0000oak",
+      "manifestPath": "vault-modules/oak/manifest.bin"
+    },
+    "spruce": {
+      "expectedKeyId": "1a2f46917e370e772623dfcd",
+      "keyDocumentPath": "vaultModules/spruce",
+      "manifestAad": "sittaigen-module-manifest-v1\u0000spruce",
+      "manifestPath": "vault-modules/spruce/manifest.bin"
     }
   },
   "version": 2

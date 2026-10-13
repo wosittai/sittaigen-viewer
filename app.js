@@ -33,7 +33,12 @@ const ADMIN_EMAIL = "coinguard2024@gmail.com";
 const ACCESS_COLLECTION = "accessUsers";
 const LEGACY_EMAILS = new Set(["wosittai@gmail.com", "79elem@gmail.com"]);
 const ACCESS_MODULES = [
-  { id: "core", label: "SITTAI i mapy lasów" },
+  { id: "core", label: "SITTAI" },
+  { id: "beech", label: "Buki" },
+  { id: "hornbeam", label: "Graby" },
+  { id: "oak", label: "Dęby" },
+  { id: "spruce", label: "Świerki" },
+  { id: "forest_mix", label: "LASY MIX" },
   { id: "hawthorn", label: "Mapa głogu" }
 ];
 const ALL_MODULE_IDS = ACCESS_MODULES.map(module => module.id);
@@ -752,8 +757,7 @@ function editAccessAccount(record) {
   elements.accessMaxLogins.value = String(Number(record.maxLogins) || 0);
   elements.accessEnabled.checked = record.enabled === true;
   const modules = normalizedModules(record);
-  elements.accessModuleCore.checked = modules.includes("core");
-  elements.accessModuleHawthorn.checked = modules.includes("hawthorn");
+  for (const input of document.querySelectorAll('input[name="modules"]')) input.checked = modules.includes(input.value);
   elements.accessFormTitle.textContent = "Edytuj dostęp";
   elements.accessSubmitButton.textContent = "Zapisz zmiany";
   elements.accessCancelButton.hidden = false;
@@ -768,8 +772,7 @@ function resetAdminForm() {
   elements.accessDuration.value = "7d";
   elements.accessMaxLogins.value = "0";
   elements.accessEnabled.checked = true;
-  elements.accessModuleCore.checked = true;
-  elements.accessModuleHawthorn.checked = true;
+  for (const input of document.querySelectorAll('input[name="modules"]')) input.checked = true;
   elements.accessFormTitle.textContent = "Dodaj konto";
   elements.accessSubmitButton.textContent = "Dodaj dostęp";
   elements.accessCancelButton.hidden = true;
@@ -912,10 +915,7 @@ function readAccessForm() {
   const maxLogins = Number(elements.accessMaxLogins.value);
   if (!Number.isInteger(maxLogins) || maxLogins < 0) throw new Error("Limit logowań musi być liczbą całkowitą od 0 wzwyż.");
 
-  const modules = [
-    elements.accessModuleCore.checked ? "core" : null,
-    elements.accessModuleHawthorn.checked ? "hawthorn" : null
-  ].filter(Boolean);
+  const modules = Array.from(document.querySelectorAll('input[name="modules"]:checked'), input => input.value);
   if (!modules.length) throw new Error("Wybierz co najmniej jeden udostępniony moduł.");
 
   return {
@@ -1068,22 +1068,7 @@ async function initializeHawthornKey(coreModule) {
 }
 
 function combinedProjects(loadedModules) {
-  const projects = loadedModules.flatMap(module => module.manifest.projects);
-  if (!loadedModules.some(module => module.id === "core") || !loadedModules.some(module => module.id === "hawthorn")) {
-    return projects;
-  }
-
-  const forestProject = projects.find(project => project.name === "Mapy lasów");
-  const hawthornProject = projects.find(project => project.name === "Mapa głogu");
-  if (!forestProject || !hawthornProject?.views?.length) return projects;
-
-  forestProject.views = [
-    ...forestProject.views,
-    ...hawthornProject.views.map(view => ({ ...view, label: "Głóg" }))
-  ];
-  forestProject.summary = "Buk, grab, dąb, świerk i głóg oraz lekkie porównanie ich współwystępowania.";
-  forestProject.meta = ["5 grup gatunków", "Dane BDL 2025–2026", "LASY MIX"];
-  return projects.filter(project => project !== hawthornProject);
+  return loadedModules.flatMap(module => module.manifest.projects);
 }
 
 async function unlock(user) {
@@ -1098,22 +1083,11 @@ async function unlock(user) {
     setStatus("Przygotowywanie prywatnej przestrzeni…");
     const allowedModules = normalizedModules(state.accessRecord);
     const loadedModules = [];
-    let coreModule = null;
-    if (allowedModules.includes("core") || isAdminUser(user)) {
-      coreModule = await readVaultModule("core");
-      loadedModules.push(coreModule);
+    for (const moduleId of allowedModules) {
+      if (moduleDefinitions()[moduleId]) loadedModules.push(await readVaultModule(moduleId));
     }
-    if (moduleDefinitions().hawthorn && (isAdminUser(user) || allowedModules.includes("hawthorn"))) {
-      try {
-        if (isAdminUser(user)) await initializeHawthornKey(coreModule);
-        if (allowedModules.includes("hawthorn")) loadedModules.push(await readVaultModule("hawthorn"));
-      } catch (error) {
-        // During a staged rollout the published client can arrive before the new
-        // Firestore rules/key document. Keep the already-authorized core portal
-        // usable; a hawthorn-only account must still fail closed.
-        if (!coreModule) throw error;
-        console.warn("Moduł mapy głogu nie jest jeszcze dostępny.", error);
-      }
+    if (allowedModules.some(id => ["beech", "hornbeam", "oak", "spruce", "forest_mix"].includes(id))) {
+      loadedModules.push(await readVaultModule("forest_data"));
     }
     if (!loadedModules.length) throw accessFailure("To konto nie ma udostępnionych modułów.");
     const manifest = {
