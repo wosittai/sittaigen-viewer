@@ -4,6 +4,7 @@ const MAGIC = "STV1";
 let rawKeys = new Map();
 let manifestByPath = new Map();
 let expiresAt = 0;
+let portalClientId = null;
 const plaintextCache = new Map();
 let cacheBytes = 0;
 let sessionRecovery = null;
@@ -18,6 +19,7 @@ self.addEventListener("activate", event => event.waitUntil(self.clients.claim())
 self.addEventListener("message", event => {
   const reply = payload => event.ports[0]?.postMessage(payload);
   if (event.data?.type === "unlock") {
+    portalClientId = event.source?.id;
     for (const key of rawKeys.values()) key.fill(0);
     rawKeys = new Map();
     manifestByPath = new Map();
@@ -179,7 +181,7 @@ async function readRange(entry, start, end) {
   return joined.slice(relativeStart, relativeStart + end - start + 1);
 }
 
-async function handleContent(request, encodedPath) {
+async function handleContent(request, encodedPath, event) {
   if (!hasActiveSession() && !(await requestSessionFromPortal())) {
     clearVaultSession();
     return lockedResponse();
@@ -208,6 +210,11 @@ async function handleContent(request, encodedPath) {
       headers.set("Content-Disposition", `attachment; filename="${filename}"`);
     }
     if (range.partial) headers.set("Content-Range", `bytes ${range.start}-${range.end}/${entry.size}`);
+    if (request.method === "GET" && !range.partial && (request.mode === "navigate" || url.searchParams.get("download") === "1") && portalClientId) {
+      event.waitUntil(self.clients.get(portalClientId).then(client => client?.postMessage({
+        type: "sittaigen-audit-view", moduleId: entry.moduleId, path, eventId: crypto.randomUUID()
+      })));
+    }
     return new Response(request.method === "HEAD" ? null : bytes, { status: range.partial ? 206 : 200, headers });
   } catch (error) {
     return new Response("Decryption or integrity check failed", { status: 500, headers: { "Cache-Control": "no-store" } });
@@ -219,6 +226,6 @@ self.addEventListener("fetch", event => {
   const scopePath = new URL(self.registration.scope).pathname;
   const contentPrefix = `${scopePath}content/`;
   if (url.origin === self.location.origin && url.pathname.startsWith(contentPrefix)) {
-    event.respondWith(handleContent(event.request, url.pathname.slice(contentPrefix.length)));
+    event.respondWith(handleContent(event.request, url.pathname.slice(contentPrefix.length), event));
   }
 });

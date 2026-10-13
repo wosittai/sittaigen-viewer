@@ -11,8 +11,8 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/dolina-five-lakes-desktop.webp?v=6" as="image" type="image/webp" media="(min-width: 561px)">
   <link rel="preload" href="assets/dolina-five-lakes-mobile.webp?v=6" as="image" type="image/webp" media="(max-width: 560px)">
-  <link rel="stylesheet" href="styles.css?v=9">
-  <script type="module" src="app.js?v=15"></script>
+  <link rel="stylesheet" href="styles.css?v=10">
+  <script type="module" src="app.js?v=16"></script>
 </head>
 <body class="login-mode">
   <header class="masthead">
@@ -189,6 +189,29 @@
           <div class="access-user-list" id="accessUserList" aria-live="polite"></div>
         </div>
       </div>
+
+      <section class="audit-panel" aria-labelledby="auditTitle">
+        <div class="access-register-head"><div><p class="section-code">HISTORIA I STATYSTYKI</p><h2 id="auditTitle">Aktywność użytkowników</h2></div>
+          <div class="audit-actions"><button type="button" class="admin-action" id="auditRefresh">Odśwież historię</button><button type="button" class="admin-action" id="auditExport">Eksport CSV</button></div>
+        </div>
+        <p id="auditStatus" role="status">Historia jest zapisywana od wdrożenia tej funkcji.</p>
+        <div class="audit-filters">
+          <label class="admin-field"><span>Konto</span><input id="auditEmail" type="search" placeholder="Szukaj adresu e-mail"></label>
+          <label class="admin-field"><span>Zdarzenie</span><select id="auditKind"><option value="">Wszystkie</option><option value="login">Logowania i odmowy</option><option value="view">Otwarcia</option></select></label>
+          <label class="admin-field"><span>Moduł</span><select id="auditModule"><option value="">Wszystkie</option><option value="core">SITTAI</option><option value="beech">Buki</option><option value="hornbeam">Graby</option><option value="oak">Dęby</option><option value="spruce">Świerki</option><option value="forest_mix">LASY MIX</option><option value="hawthorn">Mapa głogu</option></select></label>
+          <label class="admin-field"><span>Od dnia</span><input id="auditFrom" type="date"></label>
+          <label class="admin-field"><span>Do dnia</span><input id="auditTo" type="date"></label>
+        </div>
+        <p class="audit-summary" id="auditSummary">Brak pobranych zdarzeń.</p>
+        <h3>Statystyki kont</h3>
+        <div class="audit-table-wrap"><table class="audit-table"><thead><tr><th>Konto</th><th>Logowania</th><th>Odmowy</th><th>Otwarcia</th><th>Ostatnia aktywność</th></tr></thead><tbody id="auditAccounts"></tbody></table></div>
+        <h3>Otwarcia modułów</h3>
+        <div class="audit-table-wrap"><table class="audit-table"><thead><tr><th>Moduł</th><th>Otwarcia</th></tr></thead><tbody id="auditMaps"></tbody></table></div>
+        <h3>Historia zdarzeń</h3>
+        <div class="audit-table-wrap"><table class="audit-table"><thead><tr><th>Czas (Warszawa)</th><th>Konto</th><th>Zdarzenie</th><th>Moduł</th><th>Otwarta strona / plik</th></tr></thead><tbody id="auditRows"></tbody></table></div>
+        <div class="audit-pagination"><button type="button" class="admin-action" id="auditPrevious">Poprzednia</button><span id="auditPage">Strona 1</span><button type="button" class="admin-action" id="auditNext">Następna</button></div>
+        <p class="admin-footnote">Statystyki i eksport obejmują całą pobraną historię zgodną z filtrami. Odświeżenie sesji nie zwiększa liczby logowań. Otwarcie oznacza udostępnienie strony lub pliku w portalu, a nie czas jego czytania. Dziennik obejmuje uwierzytelnione konta Google; anulowanych okien Google nie da się przypisać do konta.</p>
+      </section>
 
       <div class="admin-footnote">
         Konto <strong>coinguard2024@gmail.com</strong> jest jedynym administratorem i nie podlega limitom z tej listy. Mapa głogu ma osobny klucz, więc konto z zaznaczonym wyłącznie tym modułem nie odszyfruje pozostałych projektów.

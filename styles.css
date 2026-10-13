@@ -518,3 +518,17 @@ footer { width: min(1360px, calc(100% - 72px)); min-height: 78px; margin: 0 auto
     animation-iteration-count: 1 !important;
   }
 }
+
+.audit-panel { margin-top: 32px; padding: 28px; border: 1px solid var(--line); background: var(--panel); }
+.audit-panel h3 { margin: 30px 0 14px; font-size: 17px; }
+.audit-actions, .audit-pagination { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.audit-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-top: 24px; }
+.audit-summary { padding: 20px 0; color: var(--signal); line-height: 1.8; }
+#auditStatus, .audit-pagination { color: var(--faint); font: 11px/1.7 var(--mono); }
+.audit-table-wrap { overflow-x: auto; }
+.audit-table { border-collapse: collapse; width: 100%; font: 11px/1.6 var(--mono); text-align: left; }
+.audit-table th { color: var(--signal); font-weight: 500; }
+.audit-table td, .audit-table th { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.audit-table td:last-child { overflow-wrap: anywhere; }
+.audit-pagination { margin-top: 18px; justify-content: space-between; }
+@media (max-width: 560px) { .audit-panel { padding: 16px; } .audit-panel .access-register-head { display: block; } .audit-actions { margin-top: 16px; } }

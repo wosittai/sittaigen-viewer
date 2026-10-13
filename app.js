@@ -15,6 +15,11 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
+  query,
+  orderBy,
+  limit,
+  startAfter,
   getFirestore,
   onSnapshot,
   runTransaction,
@@ -53,6 +58,9 @@ const state = {
   accessExpiryTimer: null,
   accessRecord: null,
   accessUnsubscribe: null,
+  auditEvents: [],
+  auditPage: 0,
+  auditLoading: false,
   adminUsers: [],
   adminUsersUnsubscribe: null,
   auth: null,
@@ -578,6 +586,116 @@ function openProject(project) {
   document.title = `${project.name} — Panel projektowy`;
 }
 
+async function recordAudit(kind, outcome, moduleId = "", path = "", eventId = "") {
+  const user = state.auth?.currentUser;
+  if (!user?.emailVerified || !state.db || !state.authTime) return;
+  const id = kind === "login" ? `login-${user.uid}-${state.authTime}` : `view-${user.uid}-${eventId || crypto.randomUUID()}`;
+  const reference = doc(state.db, "auditEvents", id);
+  try {
+    await runTransaction(state.db, async transaction => {
+      if ((await transaction.get(reference)).exists()) return;
+      transaction.set(reference, {
+        email: user.email, uid: user.uid, authTime: state.authTime,
+        kind, outcome, moduleId, path, occurredAt: serverTimestamp()
+      });
+    });
+  } catch (error) {
+    console.error("Nie udało się zapisać zdarzenia aktywności.", error.code);
+  }
+}
+
+function filteredAuditEvents() {
+  const email = $("auditEmail").value.trim().toLowerCase();
+  const kind = $("auditKind").value;
+  const moduleId = $("auditModule").value;
+  const from = $("auditFrom").value;
+  const to = $("auditTo").value;
+  const calendar = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Warsaw", year: "numeric", month: "2-digit", day: "2-digit" });
+  return state.auditEvents.filter(event => {
+    const day = calendar.format(new Date(timestampMillis(event.occurredAt)));
+    return event.email.toLowerCase().includes(email) && (!kind || event.kind === kind)
+      && (!moduleId || event.moduleId === moduleId) && (!from || day >= from) && (!to || day <= to);
+  });
+}
+
+function auditDate(value) {
+  const time = timestampMillis(value);
+  return time ? new Date(time).toLocaleString("pl-PL", { timeZone: "Europe/Warsaw" }) : "—";
+}
+
+function auditRow(values) {
+  const row = document.createElement("tr");
+  for (const value of values) row.append(createElement("td", "", String(value)));
+  return row;
+}
+
+function renderAudit() {
+  const events = filteredAuditEvents();
+  const users = new Map();
+  for (const event of events) {
+    const stats = users.get(event.email) || { logins: 0, denied: 0, views: 0, last: null };
+    if (event.kind === "view") stats.views += 1;
+    else if (event.outcome === "allowed") stats.logins += 1;
+    else stats.denied += 1;
+    if (!stats.last) stats.last = event.occurredAt;
+    users.set(event.email, stats);
+  }
+  $("auditSummary").textContent = `${events.filter(e => e.kind === "login" && e.outcome === "allowed").length} logowań · ${events.filter(e => e.kind === "login" && e.outcome === "denied").length} odmów · ${events.filter(e => e.kind === "view").length} otwarć · ${users.size} kont`;
+  const accounts = $("auditAccounts"); accounts.replaceChildren();
+  for (const [email, stats] of [...users].sort((a,b) => b[1].views - a[1].views)) {
+    accounts.append(auditRow([email, stats.logins, stats.denied, stats.views, auditDate(stats.last)]));
+  }
+  const maps = $("auditMaps"); maps.replaceChildren();
+  const counts = new Map();
+  for (const event of events.filter(e => e.kind === "view")) counts.set(event.moduleId, (counts.get(event.moduleId) || 0) + 1);
+  for (const [id, count] of [...counts].sort((a,b) => b[1] - a[1])) maps.append(auditRow([moduleLabel(id), count]));
+  const pageCount = Math.max(1, Math.ceil(events.length / 100));
+  state.auditPage = Math.min(state.auditPage, pageCount - 1);
+  const rows = $("auditRows"); rows.replaceChildren();
+  for (const event of events.slice(state.auditPage * 100, (state.auditPage + 1) * 100)) {
+    rows.append(auditRow([auditDate(event.occurredAt), event.email,
+      event.kind === "view" ? "Otwarcie" : event.outcome === "allowed" ? "Logowanie" : "Odmowa wejścia",
+      event.moduleId ? moduleLabel(event.moduleId) : "—", event.path || "—"]));
+  }
+  $("auditPage").textContent = `Strona ${state.auditPage + 1} z ${pageCount} · ${events.length} zdarzeń`;
+  $("auditPrevious").disabled = state.auditPage === 0;
+  $("auditNext").disabled = state.auditPage + 1 >= pageCount;
+}
+
+async function loadAudit() {
+  if (!isAdminUser() || state.auditLoading) return;
+  state.auditLoading = true; $("auditRefresh").disabled = true;
+  $("auditStatus").textContent = "Pobieranie pełnej historii…";
+  const records = [];
+  try {
+    let cursor = null;
+    do {
+      const constraints = [orderBy("occurredAt", "desc"), limit(500)];
+      if (cursor) constraints.push(startAfter(cursor));
+      const snapshot = await getDocs(query(collection(state.db, "auditEvents"), ...constraints));
+      if (!isAdminUser()) return;
+      records.push(...snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+      cursor = snapshot.size === 500 ? snapshot.docs.at(-1) : null;
+      $("auditStatus").textContent = `Pobrano ${records.length} zdarzeń…`;
+    } while (cursor);
+    state.auditEvents = records; state.auditPage = 0; renderAudit();
+    $("auditStatus").textContent = `Pełna historia: ${records.length} zdarzeń. Aktualizacja: ${new Date().toLocaleTimeString("pl-PL")}.`;
+  } catch (error) {
+    $("auditStatus").textContent = "Nie udało się pobrać historii. Spróbuj odświeżyć.";
+  } finally {
+    state.auditLoading = false; $("auditRefresh").disabled = false;
+  }
+}
+
+function exportAudit() {
+  const cell = value => '"' + String(value).replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"';
+  const rows = [["Czas (Europe/Warsaw)", "E-mail", "Zdarzenie", "Wynik", "Moduł", "Ścieżka"],
+    ...filteredAuditEvents().map(e => [auditDate(e.occurredAt), e.email, e.kind, e.outcome, moduleLabel(e.moduleId), e.path])];
+  const url = URL.createObjectURL(new Blob(["\ufeff" + rows.map(row => row.map(cell).join(";")).join("\r\n")], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a"); link.href = url; link.download = "historia-aktywnosci.csv"; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function accessDocument(email) {
   return doc(state.db, ACCESS_COLLECTION, normalizedEmail(email));
 }
@@ -889,6 +1007,7 @@ function showAdminPanel() {
   elements.adminPanel.hidden = false;
   document.title = "ADMIN — Panel projektowy";
   startAdminUsersListener();
+  void loadAudit();
 }
 
 function readAccessForm() {
@@ -1099,6 +1218,7 @@ async function unlock(user) {
     state.vaultModules = loadedModules;
     state.manifest = manifest;
     state.user = user;
+    await recordAudit("login", "allowed");
     elements.securityState.dataset.state = "open";
     elements.dashboardIdentity.textContent = user.email;
     elements.userAvatar.textContent = initials(user);
@@ -1130,6 +1250,7 @@ async function login() {
     const cancelled = ["auth/popup-closed-by-user", "auth/cancelled-popup-request"].includes(error.code);
     setStatus(cancelled ? "Logowanie zostało przerwane." : (error.message || "Nie udało się otworzyć przestrzeni."), !cancelled);
     if (!cancelled && state.auth?.currentUser) {
+      await recordAudit("login", "denied");
       state.suppressReadyOnce = true;
       await signOut(state.auth).catch(() => {});
     }
@@ -1154,6 +1275,10 @@ async function logout(message = "Sesja została bezpiecznie zamknięta.") {
   clearSessionStart();
   state.accessRecord = null;
   state.adminUsers = [];
+  state.auditEvents = [];
+  $("auditRows").replaceChildren();
+  $("auditAccounts").replaceChildren();
+  $("auditMaps").replaceChildren();
   state.authTime = 0;
   state.manifest = null;
   for (const module of state.vaultModules) module.key?.fill(0);
@@ -1211,6 +1336,7 @@ async function restoreSession(user) {
     setStatus("Przywracanie bezpiecznej sesji…");
     await unlock(user);
   } catch (error) {
+    await recordAudit("login", "denied");
     await logout(error.message || "Nie udało się przywrócić sesji.");
     setStatus(error.message || "Nie udało się przywrócić sesji.", true);
   }
@@ -1289,12 +1415,25 @@ async function init() {
     }
   });
   navigator.serviceWorker?.addEventListener("message", event => {
+    if (event.source === navigator.serviceWorker.controller && event.data?.type === "sittaigen-audit-view" && state.user) {
+      const { moduleId, path, eventId } = event.data;
+      if (state.vaultModules.some(module => module.id === moduleId && module.manifest.files.some(file => file.path === path))) {
+        void recordAudit("view", "allowed", moduleId, path, eventId);
+      }
+    }
     if (event.data?.type === "sittaigen-vault-session-request") void recoverEmbeddedSession();
   });
   window.addEventListener("storage", event => {
     if (event.key === SESSION_STARTED_KEY && !event.newValue && state.user) void logout();
   });
 
+  for (const id of ["auditEmail", "auditKind", "auditModule", "auditFrom", "auditTo"]) {
+    $(id).addEventListener("input", () => { state.auditPage = 0; renderAudit(); });
+  }
+  $("auditRefresh").addEventListener("click", () => { void loadAudit(); });
+  $("auditExport").addEventListener("click", exportAudit);
+  $("auditPrevious").addEventListener("click", () => { state.auditPage--; renderAudit(); });
+  $("auditNext").addEventListener("click", () => { state.auditPage++; renderAudit(); });
   try {
     await initializeDeviceTrust();
     resetAdminForm();
