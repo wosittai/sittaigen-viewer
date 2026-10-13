@@ -1250,6 +1250,10 @@ async function restoreSession(user) {
 }
 
 async function init() {
+  if (!window.isSecureContext && location.hostname === "projekt.polczyn.ski") {
+    location.replace("https://wosittai.github.io/sittaigen-viewer/");
+    return;
+  }
   Object.assign(elements, {
     accessPanel: $("accessPanel"),
     accessCancelButton: $("accessCancelButton"),
