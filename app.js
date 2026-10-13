@@ -1251,7 +1251,7 @@ async function restoreSession(user) {
 
 async function init() {
   if (!window.isSecureContext && location.hostname === "projekt.polczyn.ski") {
-    location.replace("https://wosittai.github.io/sittaigen-viewer/");
+    location.replace("https://projekt.polczyn.ski/" + location.search + location.hash);
     return;
   }
   Object.assign(elements, {
