@@ -1047,7 +1047,20 @@ async function readVaultModule(moduleId) {
 }
 
 function combinedProjects(loadedModules) {
-  return loadedModules.flatMap(module => module.manifest.projects);
+  const forestIds = new Set(["beech", "hornbeam", "oak", "spruce", "forest_mix", "hawthorn"]);
+  const projects = loadedModules.filter(module => !forestIds.has(module.id))
+    .flatMap(module => module.manifest.projects);
+  const views = loadedModules.filter(module => forestIds.has(module.id))
+    .flatMap(module => module.manifest.projects.flatMap(project =>
+      project.views.map(view => ({ ...view, label: moduleLabel(module.id) }))));
+  if (views.length) projects.push({
+    code: "LASY / POLSKA",
+    name: "Mapy lasów",
+    summary: "Mapy gatunków i porównanie współwystępowania w Lasach Państwowych.",
+    meta: views.map(view => view.label),
+    views
+  });
+  return projects;
 }
 
 async function unlock(user) {
