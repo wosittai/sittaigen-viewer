@@ -1,5 +1,5 @@
 {
-  "expectedKeyId": "cc54d222c9f477b644381a41",
+  "expectedKeyId": "ecb0ebe38b41cd8c052661a2",
   "firebase": {
     "apiKey": "AIzaSyBZRdkD9u7f9PNiCSk8eeUz8ARO-4L8UHs",
     "appId": "1:649075308253:web:1194d54faeb3c837bc4d34",
@@ -15,7 +15,7 @@
       "manifestPath": "vault-modules/beech/manifest.bin"
     },
     "core": {
-      "expectedKeyId": "cc54d222c9f477b644381a41",
+      "expectedKeyId": "ecb0ebe38b41cd8c052661a2",
       "keyDocumentPath": "vaults/sittaigen",
       "manifestAad": "sittaigen-manifest-v1",
       "manifestPath": "vault/manifest.bin"

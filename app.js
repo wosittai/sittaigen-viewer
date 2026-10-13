@@ -33,7 +33,6 @@ const ADMIN_EMAIL = "coinguard2024@gmail.com";
 const ACCESS_COLLECTION = "accessUsers";
 const LEGACY_EMAILS = new Set(["wosittai@gmail.com", "79elem@gmail.com"]);
 const ACCESS_MODULES = [
-  { id: "core", label: "SITTAI" },
   { id: "beech", label: "Buki" },
   { id: "hornbeam", label: "Graby" },
   { id: "oak", label: "Dęby" },
@@ -85,10 +84,12 @@ function $(id) { return document.getElementById(id); }
 function normalizedEmail(value) { return String(value || "").trim().toLowerCase(); }
 function isAdminUser(user = state.user) { return normalizedEmail(user?.email) === ADMIN_EMAIL; }
 function normalizedModules(record) {
-  if (record?.admin || record?.legacy || !Array.isArray(record?.modules)) return [...ALL_MODULE_IDS];
+  if (record?.admin) return ["core", ...ALL_MODULE_IDS];
+  if (record?.legacy || !Array.isArray(record?.modules)) return [...ALL_MODULE_IDS];
   return ALL_MODULE_IDS.filter(moduleId => record.modules.includes(moduleId));
 }
 function moduleLabel(moduleId) {
+  if (moduleId === "core") return "SITTAI";
   return ACCESS_MODULES.find(module => module.id === moduleId)?.label || moduleId;
 }
 
